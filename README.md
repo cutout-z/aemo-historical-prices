@@ -31,6 +31,49 @@ real_price = nominal_price × (CPI_latest / CPI_month)
 
 Quarterly CPI values are linearly interpolated to monthly. For months beyond the latest published CPI quarter, no adjustment is applied (ratio = 1).
 
+All real prices are expressed in **dollars as at the most recent CPI quarter** available from the RBA (e.g. if the latest published quarter is Dec 2025, all prices are in "Dec 2025 dollars"). This base shifts forward automatically each time the script re-runs after a new CPI release.
+
+### Detailed calculation example
+
+#### Step 1 — Monthly nominal price
+
+For each region/month, every dispatch interval RRP (5-min post-Oct 2021, 30-min prior) is averaged into a single nominal $/MWh figure:
+
+```
+rrp_nominal = mean of all interval RRPs in that month
+```
+
+For example, NSW Jan 2021 has ~8,928 five-minute intervals. The nominal price is the simple arithmetic mean of all 8,928 RRP values.
+
+#### Step 2 — CPI interpolation
+
+The RBA G1 CPI index is published quarterly (Mar, Jun, Sep, Dec). To get a monthly index, quarterly values are linearly interpolated — e.g. Oct gets a value 1/3 of the way between Sep and Dec, Nov gets 2/3 of the way, etc.
+
+#### Step 3 — Convert each month to real dollars
+
+Each month's nominal price is scaled to latest-quarter dollars:
+
+| Item | Value |
+|------|-------|
+| NSW nominal RRP, Jan 2021 | $85.00/MWh |
+| CPI index, Jan 2021 (interpolated) | 78.5 |
+| CPI index, latest quarter (Dec 2025) | 102.3 |
+| **Real price** | 85.00 × (102.3 / 78.5) = **$110.80/MWh** |
+
+This means: "$85 in Jan 2021 is equivalent to $110.80 in Dec 2025 purchasing power."
+
+For recent months where CPI hasn't been published yet (e.g. Jan–Mar 2026 before the Q1 2026 CPI release), the ratio is `latest / latest = 1`, so real = nominal. These months are flagged `cpi_estimated = True` in the data.
+
+#### Step 4 — Rolling averages
+
+The summary sheet shows rolling averages (1, 3, 5, 10, 15, 20 years). For example, the **5-year real RRP** is:
+
+```
+mean of the 60 most recent monthly real prices
+```
+
+Each of those 60 values has already been individually CPI-adjusted per Step 3, so the average is in constant latest-quarter dollars. Every time the script re-runs and a new CPI quarter is published, all historical real prices shift slightly as the base period moves forward.
+
 ## Usage
 
 ```bash
