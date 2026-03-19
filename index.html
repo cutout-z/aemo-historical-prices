@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AEMO Historical Prices — NEM Spot Prices</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e0e0e0; --muted: #888; --accent: #4472C4; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
+  .controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tab { padding: 8px 18px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.9rem; transition: all 0.15s; }
+  .tab:hover { color: var(--text); border-color: var(--accent); }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .toggle-group { display: flex; gap: 2px; }
+  .toggle { padding: 6px 14px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
+  .toggle:first-child { border-radius: 6px 0 0 6px; }
+  .toggle:last-child { border-radius: 0 6px 6px 0; }
+  .toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+  .card-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-value { font-size: 1.5rem; font-weight: 600; }
+  .card-sub { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 600px; overflow-y: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th { background: var(--accent); color: #fff; padding: 10px 12px; text-align: center; position: sticky; top: 0; white-space: nowrap; z-index: 1; }
+  th:first-child { text-align: left; }
+  td { padding: 7px 12px; text-align: center; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td:first-child { text-align: left; font-weight: 500; }
+  tr:hover td { background: rgba(68,114,196,0.08); }
+  tr.carbon td { background: rgba(255,242,204,0.1); }
+  .downloads { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .dl-btn { display: inline-block; padding: 8px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--accent); text-decoration: none; font-size: 0.85rem; transition: all 0.15s; }
+  .dl-btn:hover { background: var(--accent); color: #fff; }
+  .footer { margin-top: 24px; color: var(--muted); font-size: 0.78rem; }
+  .loading { text-align: center; padding: 40px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>AEMO Historical Prices</h1>
+<p class="subtitle">Monthly average NEM spot prices ($/MWh) — all intervals and peak hours (7am–10pm weekdays AEST), Jul 2003 to present</p>
+
+<div class="controls">
+  <div class="tabs" id="tabs"></div>
+  <div class="toggle-group" id="price-toggle">
+    <button class="toggle active" data-mode="nominal">Nominal</button>
+    <button class="toggle" data-mode="real">Real</button>
+  </div>
+</div>
+
+<div class="cards" id="cards"></div>
+
+<div class="table-wrap">
+  <div class="loading" id="loading">Loading data...</div>
+  <table id="table" style="display:none"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+</div>
+
+<div class="downloads" id="downloads"></div>
+<div class="footer" id="footer"></div>
+
+<script>
+const REGIONS = {NSW1:'NSW',QLD1:'QLD',VIC1:'VIC',SA1:'SA',TAS1:'TAS'};
+const EXCEL_FILES = {NSW1:'NSW_historical_prices.xlsx',QLD1:'QLD_historical_prices.xlsx',VIC1:'VIC_historical_prices.xlsx',SA1:'SA_historical_prices.xlsx',TAS1:'TAS_historical_prices.xlsx'};
+const ROLLING = [1, 3, 5, 10];
+
+let allData = [];
+let activeRegion = 'NSW1';
+let priceMode = 'nominal'; // 'nominal' or 'real'
+
+function formatMonth(ym) {
+  const [y, m] = ym.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[parseInt(m)-1] + ' ' + y;
+}
+
+function priceColor(price, min, max) {
+  if (max === min) return 'transparent';
+  const p = Math.min(Math.max((price - min) / (max - min), 0), 1);
+  let r, g, b;
+  if (p <= 0.5) {
+    const t = p / 0.5;
+    r = Math.round(99 + (255 - 99) * t);
+    g = Math.round(190 + (235 - 190) * t);
+    b = Math.round(123 + (132 - 123) * t);
+  } else {
+    const t = (p - 0.5) / 0.5;
+    r = Math.round(255 + (248 - 255) * t);
+    g = Math.round(235 + (105 - 235) * t);
+    b = Math.round(132 + (107 - 132) * t);
+  }
+  return `rgb(${r},${g},${b})`;
+}
+
+function textColor(price, min, max) {
+  const p = (price - min) / (max - min);
+  return p > 0.3 && p < 0.8 ? '#1a1a1a' : '#e0e0e0';
+}
+
+function getCol(base) {
+  return base + '_' + priceMode;
+}
+
+function renderTabs() {
+  const container = document.getElementById('tabs');
+  container.innerHTML = '';
+  for (const [id, name] of Object.entries(REGIONS)) {
+    const btn = document.createElement('button');
+    btn.className = 'tab' + (id === activeRegion ? ' active' : '');
+    btn.textContent = name;
+    btn.onclick = () => { activeRegion = id; render(); };
+    container.appendChild(btn);
+  }
+}
+
+function renderToggle() {
+  document.querySelectorAll('#price-toggle .toggle').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === priceMode);
+    btn.onclick = () => { priceMode = btn.dataset.mode; render(); };
+  });
+}
+
+function renderCards() {
+  const container = document.getElementById('cards');
+  const rows = allData.filter(r => r.region === activeRegion).sort((a, b) => a.year_month.localeCompare(b.year_month));
+  if (!rows.length) { container.innerHTML = ''; return; }
+
+  const rrpCol = getCol('rrp');
+  const peakCol = getCol('peak_rrp');
+
+  let html = '';
+  for (const period of ROLLING) {
+    const needed = period * 12;
+    if (rows.length < needed) continue;
+    const recent = rows.slice(-needed);
+    const avgRrp = recent.reduce((s, r) => s + parseFloat(r[rrpCol] || 0), 0) / recent.length;
+    const avgPeak = recent.reduce((s, r) => s + parseFloat(r[peakCol] || 0), 0) / recent.length;
+    html += `<div class="card"><div class="card-label">${period}-Year Avg RRP</div><div class="card-value">$${avgRrp.toFixed(2)}</div><div class="card-sub">${priceMode === 'real' ? 'Real' : 'Nominal'}</div></div>`;
+    html += `<div class="card"><div class="card-label">${period}-Year Avg Peak</div><div class="card-value">$${avgPeak.toFixed(2)}</div><div class="card-sub">${priceMode === 'real' ? 'Real' : 'Nominal'}</div></div>`;
+  }
+  container.innerHTML = html;
+}
+
+function renderTable() {
+  const thead = document.getElementById('thead');
+  const tbody = document.getElementById('tbody');
+
+  const rrpCol = getCol('rrp');
+  const peakCol = getCol('peak_rrp');
+
+  thead.innerHTML = '<tr><th>Month</th><th>RRP ($/MWh)</th><th>Peak RRP ($/MWh)</th></tr>';
+
+  const rows = allData.filter(r => r.region === activeRegion).sort((a, b) => a.year_month.localeCompare(b.year_month));
+
+  // Compute min/max for heatmap
+  const rrpVals = rows.map(r => parseFloat(r[rrpCol]) || 0);
+  const peakVals = rows.map(r => parseFloat(r[peakCol]) || 0);
+  const allVals = rrpVals.concat(peakVals);
+  const min = Math.min(...allVals);
+  const max = Math.max(...allVals);
+
+  tbody.innerHTML = rows.map(row => {
+    const rrp = parseFloat(row[rrpCol]) || 0;
+    const peak = parseFloat(row[peakCol]) || 0;
+    const carbon = row.carbon_flag === 'True' ? ' class="carbon"' : '';
+    const rrpBg = priceColor(rrp, min, max);
+    const peakBg = priceColor(peak, min, max);
+    return `<tr${carbon}><td>${formatMonth(row.year_month)}</td><td style="background:${rrpBg};color:${textColor(rrp,min,max)}">$${rrp.toFixed(2)}</td><td style="background:${peakBg};color:${textColor(peak,min,max)}">$${peak.toFixed(2)}</td></tr>`;
+  }).join('');
+
+  document.getElementById('table').style.display = '';
+  document.getElementById('loading').style.display = 'none';
+}
+
+function renderDownloads() {
+  const container = document.getElementById('downloads');
+  const repoBase = 'https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/';
+  container.innerHTML = '<strong style="width:100%;margin-bottom:4px">Download Excel:&nbsp;</strong>' +
+    Object.entries(REGIONS).map(([id, name]) =>
+      `<a class="dl-btn" href="${repoBase}${EXCEL_FILES[id]}" download>${name}</a>`
+    ).join('');
+}
+
+function render() {
+  renderTabs();
+  renderToggle();
+  renderCards();
+  renderTable();
+}
+
+Papa.parse('outputs/summary.csv', {
+  download: true,
+  header: true,
+  skipEmptyLines: true,
+  complete: function(results) {
+    allData = results.data;
+    const months = [...new Set(allData.map(r => r.year_month))].sort();
+    const latest = months[months.length - 1];
+    document.getElementById('footer').textContent = `Data through ${formatMonth(latest)} · Updates monthly on the 16th · Source: AEMO aggregated price & demand data`;
+    render();
+    renderDownloads();
+  },
+  error: function() {
+    document.getElementById('loading').textContent = 'Failed to load data. Check that outputs/summary.csv exists.';
+  }
+});
+</script>
+</body>
+</html>

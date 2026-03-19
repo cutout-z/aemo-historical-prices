@@ -1,0 +1,81 @@
+name: Monthly AEMO Historical Price Update
+
+on:
+  schedule:
+    # 16th of each month at midnight UTC (~10am AEST)
+    - cron: '0 0 16 * *'
+  workflow_dispatch:
+    inputs:
+      full_refresh:
+        description: 'Re-download all data from Jul 2003'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run analysis
+        run: |
+          if [ "${{ inputs.full_refresh }}" = "true" ]; then
+            python -m src.main --full-refresh
+          else
+            python -m src.main
+          fi
+
+      - name: Commit and push updated outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add outputs/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update historical price analysis $(date +%Y-%m)"
+            git push
+          fi
+
+  deploy-pages:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Pull latest (includes any new outputs)
+        run: git pull origin main
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
