@@ -112,6 +112,20 @@ index.html           # GitHub Pages dashboard
 | SA1 | South Australia |
 | TAS1 | Tasmania |
 
+## Output Validation
+
+After the pipeline runs and before committing, an automated validation step (`tests/validate_outputs.py`) checks:
+
+- `summary.csv` exists and is non-empty
+- All 5 NEM regions are present
+- Interval counts are within expected range: 1,100–1,700 (pre-Oct 2021, 30-min) or 7,000–10,000 (post-Oct 2021, 5-min)
+- Peak intervals never exceed total intervals
+- No extreme negative average prices (floor at -$500/MWh)
+- No duplicate region/month rows
+- All 5 regional Excel workbooks exist
+
+If any check fails, the workflow exits before committing — preventing bad data from reaching the dashboard.
+
 ## Notes
 
 - **Peak hours**: 7am–10pm weekdays AEST (standard NEM definition)
