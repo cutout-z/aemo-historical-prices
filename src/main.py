@@ -95,19 +95,24 @@ def run(full_refresh: bool = False):
 
     latest_year, latest_month = latest
 
+    # Never include the in-progress current month — only show complete months.
+    today = date.today()
+    if (latest_year, latest_month) == (today.year, today.month):
+        prev = today.replace(day=1) - timedelta(days=1)
+        latest_year, latest_month = prev.year, prev.month
+        logger.info(f"Current month in progress — capping at {latest_year}-{latest_month:02d}")
+
     # Step 3: Determine which months to process
     all_months = months_in_range(
         config.START_DATE.year, config.START_DATE.month,
         latest_year, latest_month,
     )
 
-    # Always re-download the current month and the previous month.
-    # The previous month may have been captured mid-month on the last run.
-    today = date.today()
-    current_ym = f"{today.year}-{today.month:02d}"
+    # Always re-download the previous calendar month in case it was captured
+    # mid-month on the prior run and now has a full complement of intervals.
     prev = today.replace(day=1) - timedelta(days=1)
     prev_ym = f"{prev.year}-{prev.month:02d}"
-    force_months = {current_ym, prev_ym}
+    force_months = {prev_ym}
 
     # Step 4: Download and analyse each new month/region
     new_results = []
