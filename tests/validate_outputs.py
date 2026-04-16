@@ -52,7 +52,7 @@ def validate():
 
     # --- Interval counts in expected range ---
     if "total_intervals" in df.columns and "year_month" in df.columns:
-        # Exclude the latest month (always in-progress when the monthly job runs on the 16th)
+        # Exclude the latest month (safety net: guards against manual mid-month runs)
         # and each region's first month (partial due to NEM entry date mid-month)
         latest_ym = df["year_month"].max()
         first_month_mask = df.apply(
