@@ -3,7 +3,7 @@
 import argparse
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, date
 from pathlib import Path
 
 import pandas as pd
@@ -101,6 +101,14 @@ def run(full_refresh: bool = False):
         latest_year, latest_month,
     )
 
+    # Always re-download the current month and the previous month.
+    # The previous month may have been captured mid-month on the last run.
+    today = date.today()
+    current_ym = f"{today.year}-{today.month:02d}"
+    prev = today.replace(day=1) - timedelta(days=1)
+    prev_ym = f"{prev.year}-{prev.month:02d}"
+    force_months = {current_ym, prev_ym}
+
     # Step 4: Download and analyse each new month/region
     new_results = []
     for year, month in all_months:
@@ -112,7 +120,7 @@ def run(full_refresh: bool = False):
             if (year, month) < (region_start.year, region_start.month):
                 continue
 
-            if not full_refresh and (region, ym) in existing:
+            if not full_refresh and (region, ym) in existing and ym not in force_months:
                 continue
 
             try:
