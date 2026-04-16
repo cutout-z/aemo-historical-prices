@@ -14,6 +14,10 @@ REGIONS = ["NSW1", "QLD1", "VIC1", "SA1", "TAS1"]
 REGION_NAMES = {"NSW1": "NSW", "QLD1": "QLD", "VIC1": "VIC", "SA1": "SA", "TAS1": "TAS"}
 # Oct 2021: NEM switched from 30-min to 5-min settlement intervals
 FORMAT_CHANGE = "2021-10"
+# First month each region entered the NEM — always partial, exempt from interval checks
+REGION_FIRST_MONTHS = {
+    "TAS1": "2005-05",  # TAS joined NEM mid-May 2005
+}
 
 errors = []
 
@@ -48,8 +52,16 @@ def validate():
 
     # --- Interval counts in expected range ---
     if "total_intervals" in df.columns and "year_month" in df.columns:
-        pre_change = df[df["year_month"] < FORMAT_CHANGE]
-        post_change = df[df["year_month"] >= FORMAT_CHANGE]
+        # Exclude the latest month (always in-progress when the monthly job runs on the 16th)
+        # and each region's first month (partial due to NEM entry date mid-month)
+        latest_ym = df["year_month"].max()
+        first_month_mask = df.apply(
+            lambda r: REGION_FIRST_MONTHS.get(r["region"]) == r["year_month"], axis=1
+        )
+        checkable = df[(df["year_month"] != latest_ym) & ~first_month_mask]
+
+        pre_change = checkable[checkable["year_month"] < FORMAT_CHANGE]
+        post_change = checkable[checkable["year_month"] >= FORMAT_CHANGE]
 
         if len(pre_change) > 0:
             bad_pre = pre_change[
