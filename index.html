@@ -201,7 +201,7 @@ Papa.parse('outputs/summary.csv', {
     allData = results.data;
     const months = [...new Set(allData.map(r => r.year_month))].sort();
     const latest = months[months.length - 1];
-    document.getElementById('footer').textContent = `Data through ${formatMonth(latest)} · Updates monthly on the 16th · Source: AEMO aggregated price & demand data`;
+    document.getElementById('footer').textContent = `Data through ${formatMonth(latest)} · Updates monthly on the 3rd · Source: AEMO aggregated price & demand data`;
     render();
     renderDownloads();
   },

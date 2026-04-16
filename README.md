@@ -12,7 +12,7 @@ Automated analysis of NEM spot electricity prices across all five regions (NSW, 
 - Calculates mean RRP and peak-hour RRP (7am–10pm weekdays AEST) for each region
 - Applies CPI adjustment using the RBA Consumer Price Index to produce real (constant-dollar) prices
 - Generates per-region Excel workbooks with rolling averages, monthly data, and heatmaps
-- Updates automatically on the 16th of each month via GitHub Actions
+- Updates automatically on the 3rd of each month via GitHub Actions (only complete months are shown — the current in-progress month is excluded)
 
 ## Data Sources
 
