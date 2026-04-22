@@ -183,7 +183,8 @@ function renderDownloads() {
   container.innerHTML = '<strong style="width:100%;margin-bottom:4px">Download Excel:&nbsp;</strong>' +
     Object.entries(REGIONS).map(([id, name]) =>
       `<a class="dl-btn" href="${repoBase}${EXCEL_FILES[id]}" download>${name}</a>`
-    ).join('');
+    ).join('') +
+    `<a class="dl-btn" href="${repoBase}All_States_historical_prices.xlsx" download style="border-color:var(--accent);font-weight:600">All States</a>`;
 }
 
 function render() {

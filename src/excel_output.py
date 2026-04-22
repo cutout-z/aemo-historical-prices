@@ -44,6 +44,31 @@ def generate_all_workbooks(summary: pd.DataFrame, output_dir: str):
         _write_region_workbook(region_data, friendly, filepath)
         logger.info(f"Written {filepath.name}")
 
+    generate_all_states_workbook(summary, output_dir)
+
+
+def generate_all_states_workbook(summary: pd.DataFrame, output_dir: str):
+    """Generate a single workbook with all regions as separate sheets (Monthly Data view)."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    filepath = output_path / "All_States_historical_prices.xlsx"
+
+    wb = Workbook()
+
+    for region in config.REGIONS:
+        region_data = summary[summary["region"] == region].copy()
+        if region_data.empty:
+            continue
+        region_data = region_data.sort_values("year_month").reset_index(drop=True)
+        friendly = config.REGION_NAMES[region]
+        _write_data_sheet(wb, region_data, friendly, sheet_title=friendly)
+
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    wb.save(filepath)
+    logger.info(f"Written {filepath.name}")
+
 
 def _format_month(year_month: str) -> str:
     """Convert '2003-07' to 'Jul 2003'."""
@@ -112,9 +137,9 @@ def _write_summary_sheet(wb: Workbook, data: pd.DataFrame, region_name: str):
         ws.column_dimensions[get_column_letter(col_idx)].width = 20
 
 
-def _write_data_sheet(wb: Workbook, data: pd.DataFrame, region_name: str):
+def _write_data_sheet(wb: Workbook, data: pd.DataFrame, region_name: str, sheet_title: str = "Monthly Data"):
     """Sheet 2: Full monthly time series."""
-    ws = wb.create_sheet(title="Monthly Data")
+    ws = wb.create_sheet(title=sheet_title)
 
     headers = [
         "Month", "RRP (Nominal)", "Peak RRP (Nominal)",
