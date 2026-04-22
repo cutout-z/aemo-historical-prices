@@ -110,6 +110,10 @@ def validate():
         xlsx_path = OUTPUTS_DIR / f"{name}_historical_prices.xlsx"
         check(xlsx_path.exists(), f"{xlsx_path.name} does not exist")
 
+    # --- All-states workbook exists ---
+    all_states_path = OUTPUTS_DIR / "All_States_historical_prices.xlsx"
+    check(all_states_path.exists(), "All_States_historical_prices.xlsx does not exist")
+
 
 if __name__ == "__main__":
     print("Validating AEMO Historical Prices outputs...")
