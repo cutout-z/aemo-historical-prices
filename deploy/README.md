@@ -1,8 +1,8 @@
-# VPS Monthly Updates
+# VPS Data Monitoring
 
 Production model:
 
-- Hetzner VPS runs the monthly data refresh and keeps only a bounded recent raw cache.
+- Hetzner VPS checks daily for updated monthly data and keeps only a bounded recent raw cache.
 - GitHub stores code and publishable `outputs/`.
 - GitHub Pages deploys after the VPS pushes updated outputs.
 - GitHub Actions remains available for manual verification, but should not be the primary scheduled data runner.
@@ -11,7 +11,7 @@ Production model:
 
 | Lane | Timer | Pipeline args | Purpose |
 | --- | --- | --- | --- |
-| Monthly historical prices | `aemo-historical-prices.timer` | `--months-back 2` | Reprocess the recent complete-month overlap window, preserve settled nominal history, regenerate CPI-adjusted outputs and workbooks. |
+| Historical price data monitor | `aemo-historical-prices.timer` | `--months-back 2` | Check daily for newly published or corrected monthly AEMO price/demand CSVs, reprocess the recent complete-month overlap window, preserve settled nominal history, regenerate CPI-adjusted outputs and workbooks only when canonical summary data changes. |
 
 Recommended layout:
 
