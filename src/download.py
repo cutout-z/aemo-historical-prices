@@ -21,18 +21,26 @@ def _build_url(year: int, month: int, region: str) -> str:
     return config.AEMO_URL_PATTERN.format(ym=ym, region=region)
 
 
-def download_month(year: int, month: int, region: str, cache_dir: str) -> pd.DataFrame:
+def download_month(
+    year: int,
+    month: int,
+    region: str,
+    cache_dir: str,
+    *,
+    force: bool = False,
+) -> pd.DataFrame:
     """Download a single AEMO CSV for one month/region, with local caching.
 
     Returns DataFrame with columns [REGION, SETTLEMENTDATE, TOTALDEMAND, RRP, PERIODTYPE].
     """
     cache_path = Path(cache_dir) / f"PRICE_AND_DEMAND_{year:04d}{month:02d}_{region}.csv"
 
-    if cache_path.exists():
+    if cache_path.exists() and not force:
         return _read_csv(cache_path)
 
     url = _build_url(year, month, region)
-    logger.info(f"Downloading {region} {year}-{month:02d}...")
+    action = "Re-downloading" if force and cache_path.exists() else "Downloading"
+    logger.info(f"{action} {region} {year}-{month:02d}...")
 
     for attempt in range(config.MAX_RETRIES):
         try:
