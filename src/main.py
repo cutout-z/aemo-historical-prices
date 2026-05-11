@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, date
 from pathlib import Path
 
 import pandas as pd
+from pandas.testing import assert_frame_equal
 
 from . import config
 from .download import download_month, get_latest_available_month
@@ -70,13 +71,62 @@ def months_in_range(start_year: int, start_month: int,
     return result
 
 
-def run(full_refresh: bool = False):
+def _month_labels(months: list[tuple[int, int]], months_back: int) -> set[str]:
+    if months_back <= 0:
+        return set()
+    return {f"{y}-{m:02d}" for y, m in months[-months_back:]}
+
+
+def _assert_settled_history_unchanged(
+    before: pd.DataFrame | None,
+    after: pd.DataFrame,
+    mutable_months: set[str],
+) -> None:
+    """Protect settled nominal history while allowing CPI columns to refresh."""
+    if before is None or before.empty or after.empty:
+        return
+
+    key_cols = ["region", "year_month"]
+    protected_cols = [
+        "region",
+        "year_month",
+        "rrp_nominal",
+        "peak_rrp_nominal",
+        "total_intervals",
+        "peak_intervals",
+        "carbon_flag",
+    ]
+    protected_cols = [c for c in protected_cols if c in before.columns and c in after.columns]
+    if not all(c in protected_cols for c in key_cols):
+        return
+
+    before_protected = before[~before["year_month"].isin(mutable_months)][protected_cols]
+    after_protected = after[after["year_month"].isin(before_protected["year_month"])][protected_cols]
+    before_protected = before_protected.sort_values(key_cols).reset_index(drop=True)
+    after_protected = after_protected.sort_values(key_cols).reset_index(drop=True)
+
+    try:
+        assert_frame_equal(before_protected, after_protected, check_dtype=False)
+    except AssertionError as exc:
+        raise RuntimeError(
+            "Historical price run attempted to change settled nominal months outside "
+            "the mutable window. Use --full-refresh only for deliberate audited rewrites."
+        ) from exc
+
+    logger.info(
+        "Settled-history guard: %d protected region-month rows unchanged",
+        len(before_protected),
+    )
+
+
+def run(full_refresh: bool = False, months_back: int = 1):
     """Main execution flow."""
     cache_dir = str(PROJECT_ROOT / config.DATA_DIR)
     output_dir = str(PROJECT_ROOT / config.OUTPUT_DIR)
 
     # Step 1: Load existing summary (nominal prices only for incremental)
     summary = None if full_refresh else load_summary()
+    settled_before = summary.copy() if summary is not None and not full_refresh else None
     existing = get_existing_months(summary)
 
     if full_refresh:
@@ -108,11 +158,11 @@ def run(full_refresh: bool = False):
         latest_year, latest_month,
     )
 
-    # Always re-download the previous calendar month in case it was captured
-    # mid-month on the prior run and now has a full complement of intervals.
-    prev = today.replace(day=1) - timedelta(days=1)
-    prev_ym = f"{prev.year}-{prev.month:02d}"
-    force_months = {prev_ym}
+    # Always re-download the recent mutable window in case the prior run captured
+    # an incomplete AEMO publication. Older months are treated as settled history.
+    force_months = _month_labels(all_months, months_back)
+    if force_months:
+        logger.info("Mutable window: %s", ", ".join(sorted(force_months)))
 
     # Step 4: Download and analyse each new month/region
     new_results = []
@@ -129,7 +179,13 @@ def run(full_refresh: bool = False):
                 continue
 
             try:
-                raw_df = download_month(year, month, region, cache_dir)
+                raw_df = download_month(
+                    year,
+                    month,
+                    region,
+                    cache_dir,
+                    force=(not full_refresh and ym in force_months),
+                )
                 if raw_df.empty:
                     logger.warning(f"No data for {region} {ym}, skipping")
                     continue
@@ -164,6 +220,8 @@ def run(full_refresh: bool = False):
     summary = adjust_prices(summary, cpi_df, latest_cpi)
 
     summary = summary.sort_values(["region", "year_month"]).reset_index(drop=True)
+    if not full_refresh:
+        _assert_settled_history_unchanged(settled_before, summary, force_months)
 
     # Step 7: Save summary and generate Excel
     save_summary(summary)
@@ -180,8 +238,14 @@ def main():
         action="store_true",
         help="Re-download all data from Jul 2003 (default: incremental update)",
     )
+    parser.add_argument(
+        "--months-back",
+        type=int,
+        default=1,
+        help="Number of recent complete months to reprocess in incremental mode",
+    )
     args = parser.parse_args()
-    run(full_refresh=args.full_refresh)
+    run(full_refresh=args.full_refresh, months_back=args.months_back)
 
 
 if __name__ == "__main__":

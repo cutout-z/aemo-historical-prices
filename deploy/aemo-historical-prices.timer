@@ -1,0 +1,13 @@
+[Unit]
+Description=Run monthly AEMO Historical Prices refresh
+Documentation=https://github.com/cutout-z/aemo-historical-prices
+
+[Timer]
+# 00:25 UTC on the 3rd = 08:25 Australia/Perth.
+OnCalendar=*-*-03 00:25:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=aemo-historical-prices.service
+
+[Install]
+WantedBy=timers.target
