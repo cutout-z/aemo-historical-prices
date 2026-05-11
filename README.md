@@ -12,7 +12,7 @@ Automated analysis of NEM spot electricity prices across all five regions (NSW, 
 - Calculates mean RRP and peak-hour RRP (7am–10pm weekdays AEST) for each region
 - Applies CPI adjustment using the RBA Consumer Price Index to produce real (constant-dollar) prices
 - Generates per-region Excel workbooks with rolling averages, monthly data, and heatmaps
-- Updates automatically on the 3rd of each month via GitHub Actions (only complete months are shown — the current in-progress month is excluded)
+- Checks daily for newly published or corrected monthly AEMO data via Hetzner VPS automation. Only complete months are shown — the current in-progress month is excluded.
 
 ## Data Sources
 
@@ -86,6 +86,16 @@ python -m src.main
 python -m src.main --full-refresh
 ```
 
+## Automation
+
+Production updates are monitored by the Hetzner VPS systemd lane documented in [`deploy/README.md`](deploy/README.md):
+
+- `aemo-historical-prices.timer` runs daily and reprocesses the recent complete-month overlap window.
+- Older nominal price history is treated as settled; the pipeline aborts if protected months change unexpectedly.
+- The VPS publishes only when canonical `outputs/summary.csv` changes, so daily workbook regeneration does not create noisy commits.
+- GitHub Pages deploys on output pushes.
+- GitHub Actions is kept as a manual verification/fallback runner.
+
 ## Project Structure
 
 ```
@@ -99,6 +109,7 @@ src/
 outputs/
 ├── summary.csv      # Master dataset (all regions, all months)
 └── *.xlsx           # Per-region Excel workbooks
+deploy/              # VPS systemd timer and runner script
 index.html           # GitHub Pages dashboard
 ```
 
@@ -124,7 +135,7 @@ After the pipeline runs and before committing, an automated validation step (`te
 - No duplicate region/month rows
 - All 5 regional Excel workbooks exist
 
-If any check fails, the workflow exits before committing — preventing bad data from reaching the dashboard.
+If any check fails, the VPS runner or manual fallback workflow exits before committing — preventing bad data from reaching the dashboard.
 
 ## Notes
 
