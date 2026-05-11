@@ -1,10 +1,10 @@
 [Unit]
-Description=Run monthly AEMO Historical Prices refresh
+Description=Monitor AEMO Historical Prices for updated monthly data
 Documentation=https://github.com/cutout-z/aemo-historical-prices
 
 [Timer]
-# 00:25 UTC on the 3rd = 08:25 Australia/Perth.
-OnCalendar=*-*-03 00:25:00
+# Check daily so new AEMO monthly files are picked up soon after publication.
+OnCalendar=*-*-* 00:25:00
 RandomizedDelaySec=20m
 Persistent=true
 Unit=aemo-historical-prices.service
