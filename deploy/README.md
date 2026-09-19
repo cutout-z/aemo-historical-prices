@@ -1,39 +1,37 @@
-# VPS Data Monitoring
+# Frequency-Driven Updates — NAS runner (production)
 
-Production model:
+The production model:
 
-- Hetzner VPS checks daily for updated monthly data and keeps only a bounded recent raw cache.
+- The **NAS runner** (QNAP `ai-wif-runner` container) runs the scheduled
+  historical-price data monitor and keeps only a bounded recent raw cache.
 - GitHub stores code and publishable `outputs/`.
-- GitHub Pages deploys after the VPS pushes updated outputs.
-- GitHub Actions remains available for manual verification, but should not be the primary scheduled data runner.
+- GitHub Pages deploys after the NAS lane pushes updated outputs.
+- GitHub Actions remains available for manual verification, but is not the
+  primary scheduled data runner.
 
 ## Lane
 
-| Lane | Timer | Pipeline args | Purpose |
-| --- | --- | --- | --- |
-| Historical price data monitor | `aemo-historical-prices.timer` | `--months-back 2` | Check daily for newly published or corrected monthly AEMO price/demand CSVs, reprocess the recent complete-month overlap window, preserve settled nominal history, regenerate CPI-adjusted outputs and workbooks only when canonical summary data changes. |
+QNAP scheduled tasks invoke `nas-job aemo-historical-prices`, which runs this
+repo's `deploy/run-update.sh` (renamed from the retired VPS-era
+`run-vps-update.sh` in the 2026-09 cleanup) with the lane's `PIPELINE_ARGS`:
 
-Recommended layout:
+| Lane | `PIPELINE_ARGS` | Purpose |
+| --- | --- | --- |
+| Historical price data monitor | `--months-back 2` | Check for newly published or corrected monthly AEMO price/demand CSVs, reprocess the recent complete-month overlap window, preserve settled nominal history, regenerate CPI-adjusted outputs and workbooks only when canonical summary data changes. |
 
-```text
-/opt/aemo-historical-prices      git checkout + virtualenv
-/etc/aemo-historical-prices/env  service settings
-```
+The lane registry, cadence windows and report paths live in
+`tools/nas-runner/configs/brain-ops.nas.toml` (the NAS runner tooling).
+`deploy/run-update.sh` runs the full test suite and commits/pushes only when
+`outputs/` changed, and the script self-heals a rewritten `main`: if
+`git pull --ff-only` is impossible it resets onto the fetched remote instead
+of exiting 128.
 
-Create `/etc/aemo-historical-prices/env` from `env.example`. The service user needs a repo-scoped deploy key that can push to `cutout-z/aemo-historical-prices`.
+## Raw Cache Retention
 
-## Install Timer
+`RUN_RAW_CACHE_PRUNE=1` with `RAW_CACHE_RETENTION_DAYS=120` bounds the raw
+cache via `deploy/prune-raw-cache.sh`.
 
-```bash
-sudo cp deploy/aemo-historical-prices.service /etc/systemd/system/
-sudo cp deploy/aemo-historical-prices.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now aemo-historical-prices.timer
-```
+## Env
 
-Run once manually:
-
-```bash
-sudo systemctl start aemo-historical-prices.service
-journalctl -u aemo-historical-prices.service -f
-```
+`deploy/env.example` documents the settings the lane injects (`APP_DIR`,
+`PIPELINE_ARGS`, test/push toggles, cache retention).
