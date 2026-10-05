@@ -1,73 +1,135 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AEMO Historical Prices — NEM Spot Prices</title>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<style>
-  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e0e0e0; --muted: #888; --accent: #4472C4; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
-  .controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
-  .tab { padding: 8px 18px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.9rem; transition: all 0.15s; }
-  .tab:hover { color: var(--text); border-color: var(--accent); }
-  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .toggle-group { display: flex; gap: 2px; }
-  .toggle { padding: 6px 14px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
-  .toggle:first-child { border-radius: 6px 0 0 6px; }
-  .toggle:last-child { border-radius: 0 6px 6px 0; }
-  .toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
-  .card-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .card-value { font-size: 1.5rem; font-weight: 600; }
-  .card-sub { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
-  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; max-height: 600px; overflow-y: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
-  th { background: var(--accent); color: #fff; padding: 10px 12px; text-align: center; position: sticky; top: 0; white-space: nowrap; z-index: 1; }
-  th:first-child { text-align: left; }
-  td { padding: 7px 12px; text-align: center; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  td:first-child { text-align: left; font-weight: 500; }
-  tr:hover td { background: rgba(68,114,196,0.08); }
-  tr.carbon td { background: rgba(255,242,204,0.1); }
-  .downloads { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
-  .dl-btn { display: inline-block; padding: 8px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--accent); text-decoration: none; font-size: 0.85rem; transition: all 0.15s; }
-  .dl-btn:hover { background: var(--accent); color: #fff; }
-  .footer { margin-top: 24px; color: var(--muted); font-size: 0.78rem; }
-  .loading { text-align: center; padding: 40px; color: var(--muted); }
-</style>
+<script>
+  // Theme before first paint: ?theme=light|dark forces one (screenshots, shared links) without
+  // changing the saved choice; otherwise the viewer's saved choice; otherwise dark.
+  (function () {
+    var t = null;
+    try { t = new URLSearchParams(location.search).get('theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') { try { t = localStorage.getItem('aemo-historical-prices:theme'); } catch (e) {} }
+    document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+  })();
+</script>
+<link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body>
 
-<h1>AEMO Historical Prices</h1>
-<p class="subtitle">Monthly average NEM spot prices ($/MWh) — all intervals and peak hours (7am–10pm weekdays AEST), Jul 2003 to present</p>
+<div class="min-h-screen sm:p-2">
+<main class="min-h-[calc(100vh-1rem)] bg-canvas sm:rounded-panel sm:border sm:border-line-soft">
+<div class="mx-auto max-w-[1160px] px-4 py-6 sm:px-8 sm:py-10">
 
-<div class="controls">
-  <div class="tabs" id="tabs"></div>
-  <div class="toggle-group" id="price-toggle">
-    <button class="toggle active" data-mode="nominal">Nominal</button>
-    <button class="toggle" data-mode="real">Real</button>
-  </div>
+  <header class="grid grid-cols-[1fr_auto] items-center gap-x-4">
+    <p class="eyebrow">National Electricity Market · monthly spot prices</p>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" data-theme-set="dark">Dark</button>
+      <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" data-theme-set="light">Light</button>
+    </div>
+    <h1 class="col-span-2 mt-1.5 text-[22px] font-semibold leading-7 text-ink">AEMO Historical Prices</h1>
+    <p class="col-span-2 mt-1.5 max-w-[72ch] text-[13px] leading-5 text-muted">Monthly average NEM spot prices ($/MWh) — all intervals and peak hours (7am–10pm weekdays AEST), Jul 2003 to present</p>
+  </header>
+
+  <section class="card mt-6 overflow-hidden" aria-labelledby="kpi-title">
+    <div class="card-head">
+      <div>
+        <h2 id="kpi-title" class="card-title">At a glance</h2>
+        <p class="card-sub" id="kpi-sub">Average monthly price over the latest 1, 3, 5 and 10 years, for the region and price basis selected in the table</p>
+      </div>
+    </div>
+    <div class="mt-4 grid grid-cols-2 gap-px border-t border-line-soft bg-line-soft lg:grid-cols-4" id="kpis" aria-live="polite">
+      <div class="bg-surface px-5 py-4"><div class="skeleton h-8 w-24"></div><div class="skeleton mt-2 h-3 w-32"></div><div class="skeleton mt-2 h-3 w-28"></div></div>
+      <div class="bg-surface px-5 py-4"><div class="skeleton h-8 w-24"></div><div class="skeleton mt-2 h-3 w-32"></div><div class="skeleton mt-2 h-3 w-28"></div></div>
+      <div class="bg-surface px-5 py-4"><div class="skeleton h-8 w-24"></div><div class="skeleton mt-2 h-3 w-32"></div><div class="skeleton mt-2 h-3 w-28"></div></div>
+      <div class="bg-surface px-5 py-4"><div class="skeleton h-8 w-24"></div><div class="skeleton mt-2 h-3 w-32"></div><div class="skeleton mt-2 h-3 w-28"></div></div>
+    </div>
+  </section>
+
+  <section class="card mt-4" aria-labelledby="dl-title">
+    <div class="card-head">
+      <div>
+        <h2 id="dl-title" class="card-title">Download the workbooks</h2>
+        <p class="card-sub" id="dl-sub">Excel · one workbook per region, plus All States</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="flex flex-wrap items-center gap-2" id="downloads">
+        <a class="btn btn-primary" href="https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/NSW_historical_prices.xlsx" download><span class="skeleton-inline size-3.5"></span><span class="skeleton-inline h-3 w-24"></span></a>
+        <a class="btn" href="https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/All_States_historical_prices.xlsx" download><span class="skeleton-inline size-3.5"></span><span class="skeleton-inline h-3 w-16"></span></a>
+        <span class="mx-1 hidden h-5 w-px bg-line sm:inline-block" aria-hidden="true"></span>
+        <span class="eyebrow ml-1 mr-0.5 w-full sm:ml-0 sm:w-auto">Other regions</span>
+        <a class="btn btn-ghost" href="https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/QLD_historical_prices.xlsx" download><span class="skeleton-inline size-3.5"></span><span class="skeleton-inline h-3 w-8"></span></a>
+        <a class="btn btn-ghost" href="https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/VIC_historical_prices.xlsx" download><span class="skeleton-inline size-3.5"></span><span class="skeleton-inline h-3 w-8"></span></a>
+        <a class="btn btn-ghost" href="https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/SA_historical_prices.xlsx" download><span class="skeleton-inline size-3.5"></span><span class="skeleton-inline h-3 w-8"></span></a>
+        <a class="btn btn-ghost" href="https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/TAS_historical_prices.xlsx" download><span class="skeleton-inline size-3.5"></span><span class="skeleton-inline h-3 w-8"></span></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="card mt-4 overflow-hidden" aria-labelledby="heat-title">
+    <div class="card-head flex-wrap">
+      <div class="min-w-0 flex-1 basis-80">
+        <h2 id="heat-title" class="card-title">Monthly average spot price</h2>
+        <p class="card-sub">$/MWh · RRP = every interval, Peak RRP = 7am–10pm weekdays AEST only · latest month at the bottom</p>
+        <div class="placeholder-badges mt-2.5 flex flex-wrap gap-1.5" id="badges">
+          <span class="badge"><span class="skeleton-inline h-2.5 w-10"></span></span>
+          <span class="badge"><span class="skeleton-inline h-2.5 w-20"></span></span>
+          <span class="badge"><span class="skeleton-inline h-2.5 w-14"></span></span>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="seg" id="tabs" role="tablist" aria-label="Region">
+          <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" disabled><span class="skeleton h-2.5 w-6"></span></button>
+          <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" disabled><span class="skeleton h-2.5 w-6"></span></button>
+          <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" disabled><span class="skeleton h-2.5 w-6"></span></button>
+          <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" disabled><span class="skeleton h-2.5 w-6"></span></button>
+          <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" disabled><span class="skeleton h-2.5 w-6"></span></button>
+        </div>
+        <div class="seg" id="price-toggle" role="group" aria-label="Price basis">
+          <button type="button" class="seg-item seg-item-active max-sm:h-8 max-sm:px-3" data-mode="nominal" aria-pressed="true">Nominal</button>
+          <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" data-mode="real" aria-pressed="false">Real</button>
+        </div>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pt-4" data-heat-legend>
+      <span class="eyebrow">Scale</span>
+      <ol class="grid grid-cols-4 gap-px overflow-hidden rounded-md sm:grid-cols-8" aria-label="Heat scale: price in $/MWh, eight steps from under $30 to $250 and over">
+        <li class="seq-0 num px-2 py-1 text-center text-[12px] font-medium">&lt;$30</li>
+        <li class="seq-1 num px-2 py-1 text-center text-[12px] font-medium">$30–45</li>
+        <li class="seq-2 num px-2 py-1 text-center text-[12px] font-medium">$45–60</li>
+        <li class="seq-3 num px-2 py-1 text-center text-[12px] font-medium">$60–80</li>
+        <li class="seq-4 num px-2 py-1 text-center text-[12px] font-medium">$80–110</li>
+        <li class="seq-5 num px-2 py-1 text-center text-[12px] font-medium">$110–160</li>
+        <li class="seq-6 num px-2 py-1 text-center text-[12px] font-medium">$160–250</li>
+        <li class="seq-7 num px-2 py-1 text-center text-[12px] font-medium">$250+</li>
+      </ol>
+      <span class="text-[12px] leading-4 text-faint">→ higher price · each range includes its lower bound · one scale for every region, nominal and real</span>
+    </div>
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 pt-2.5 text-[12px] leading-4 text-faint">
+      <span class="inline-flex items-center gap-1.5"><span class="badge-dot text-accent" aria-hidden="true"></span>Carbon price period (Jul 2012 – Jun 2014)</span>
+      <span id="basis-note">Nominal = prices as traded</span>
+    </div>
+    <div class="table-wrap mt-4 max-h-[min(72vh,760px)] sm:min-h-[min(60vh,648px)] overflow-auto border-t border-line-soft"><div id="table-state" aria-busy="true"><div class="px-5 py-5" role="status" aria-label="Loading data"><div class="skeleton h-9 w-full"></div><div class="mt-3 space-y-2.5"><div class="skeleton h-8 w-full"></div><div class="skeleton h-8 w-full"></div><div class="skeleton h-8 w-11/12"></div><div class="skeleton h-8 w-full"></div><div class="skeleton h-8 w-10/12"></div><div class="skeleton h-8 w-full"></div><div class="skeleton h-8 w-full"></div><div class="skeleton h-8 w-11/12"></div><div class="skeleton h-8 w-full"></div></div></div></div><table id="table" class="w-full min-w-[470px] table-fixed border-separate border-spacing-0" style="display:none"><colgroup><col class="w-[124px] sm:w-[220px]"><col><col></colgroup><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+    <div class="card-foot" id="footer"><span>Source: AEMO aggregated price &amp; demand data · RBA CPI (G1) for real prices</span><span aria-hidden="true">·</span><span>as of: loading…</span></div>
+  </section>
+
+
+  <footer class="mt-6 text-[12px] leading-4 text-faint">
+    <span>Static page · figures computed in your browser from <a class="underline decoration-line-strong underline-offset-2 hover:text-ink max-sm:-my-2.5 max-sm:inline-block max-sm:py-2.5" href="outputs/summary.csv">outputs/summary.csv</a></span>
+  </footer>
+
 </div>
-
-<div class="cards" id="cards"></div>
-
-<div class="table-wrap">
-  <div class="loading" id="loading">Loading data...</div>
-  <table id="table" style="display:none"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+</main>
 </div>
-
-<div class="downloads" id="downloads"></div>
-<div class="footer" id="footer"></div>
 
 <script>
 const REGIONS = {NSW1:'NSW',QLD1:'QLD',VIC1:'VIC',SA1:'SA',TAS1:'TAS'};
 const EXCEL_FILES = {NSW1:'NSW_historical_prices.xlsx',QLD1:'QLD_historical_prices.xlsx',VIC1:'VIC_historical_prices.xlsx',SA1:'SA_historical_prices.xlsx',TAS1:'TAS_historical_prices.xlsx'};
 const ROLLING = [1, 3, 5, 10];
+const SOURCE = 'Source: AEMO aggregated price &amp; demand data · RBA CPI (G1) for real prices';
 
 let allData = [];
 let activeRegion = 'NSW1';
@@ -79,31 +141,112 @@ function formatMonth(ym) {
   return months[parseInt(m)-1] + ' ' + y;
 }
 
-function priceColor(price, min, max) {
-  if (max === min) return 'transparent';
-  const p = Math.min(Math.max((price - min) / (max - min), 0), 1);
-  let r, g, b;
-  if (p <= 0.5) {
-    const t = p / 0.5;
-    r = Math.round(99 + (255 - 99) * t);
-    g = Math.round(190 + (235 - 190) * t);
-    b = Math.round(123 + (132 - 123) * t);
-  } else {
-    const t = (p - 0.5) / 0.5;
-    r = Math.round(255 + (248 - 255) * t);
-    g = Math.round(235 + (105 - 235) * t);
-    b = Math.round(132 + (107 - 132) * t);
-  }
-  return `rgb(${r},${g},${b})`;
+// $/MWh with a real minus sign: peak prices can dip a few cents below zero.
+function usd(v) {
+  const n = Math.abs(v).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  return (v < 0 ? '−$' : '$') + n;
 }
 
-function textColor(price, min, max) {
-  const p = (price - min) / (max - min);
-  return p > 0.3 && p < 0.8 ? '#1a1a1a' : '#e0e0e0';
+// Mean of 2-decimal prices, rounded to the cent. Summing as integer cents keeps an exact half-cent
+// average (e.g. 141.965) from landing a hair under the tie in binary floats and rounding down.
+function mean2(vals) {
+  const cents = vals.reduce((s, v) => s + Math.round(v * 100), 0);
+  return Math.round(cents / vals.length) / 100;
+}
+
+// Heat: the JS picks a step on the token ramp (.seq-0 … .seq-7), never a colour, so the light theme
+// flips it from the tokens alone. The stops are fixed dollars, not each region's min and max, so one
+// price is one colour for every region and both bases (real prices simply sit higher on the scale).
+// They are uneven on purpose: half of all monthly prices fall between $30 and $80, so equal bins
+// would paint most of the table one colour. Keep these in step with the legend in the table card.
+const HEAT_STOPS = [30, 45, 60, 80, 110, 160, 250];   // <30 → seq-0; [30,45) → seq-1 … [250,∞) → seq-7
+function heatStep(price) {
+  const i = HEAT_STOPS.findIndex(s => price < s);
+  return i === -1 ? 7 : i;
 }
 
 function getCol(base) {
   return base + '_' + priceMode;
+}
+
+function regionRows() {
+  return allData.filter(r => r.region === activeRegion).sort((a, b) => a.year_month.localeCompare(b.year_month));
+}
+
+// Real prices are in dollars of the latest CPI quarter. The last month the CPI actually covers is
+// that base; months after it are flagged cpi_estimated and carry real = nominal.
+function cpiBase() {
+  const covered = allData.filter(r => r.cpi_estimated !== 'True').map(r => r.year_month).sort();
+  return covered.length ? covered[covered.length - 1] : null;
+}
+
+// States: absence is stated, never faked with a zero.
+const STATE_ICON = '<svg class="state-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M8 4.75v3.75M8 11h.01"/></svg>';
+function stateHTML(title, body) {
+  return `<div class="state px-5" role="status">${STATE_ICON}<div><p class="state-title">${title}</p><p class="state-body">${body}</p></div></div>`;
+}
+function kpiState(title, body) {
+  document.getElementById('kpis').innerHTML = `<div class="col-span-2 bg-surface lg:col-span-4">${stateHTML(title, body)}</div>`;
+}
+function tableState(html) {
+  const box = document.getElementById('table-state');
+  box.innerHTML = html;
+  box.style.display = html ? '' : 'none';
+  // The wrapper is the element the app empties when the data lands: keep its busy state truthful
+  // for assistive tech (the served shell ships aria-busy="true" with the loading skeleton inside).
+  box.setAttribute('aria-busy', html ? 'true' : 'false');
+  document.getElementById('table').style.display = html ? 'none' : '';
+}
+const CSV_PATH = '<code class="mono text-ink">outputs/summary.csv</code>';
+
+function loadFailed(title, body) {
+  kpiState('No figures to show', 'The data file is not available, so there is nothing to summarise.');
+  tableState(stateHTML(title, body));
+  document.getElementById('tabs').style.display = 'none';
+  document.getElementById('price-toggle').style.display = 'none';
+  document.getElementById('badges').innerHTML = '';
+  document.getElementById('basis-note').textContent = '';
+  document.getElementById('footer').innerHTML =
+    `<span>${SOURCE}</span><span aria-hidden="true">·</span><span>as of: not known — the data file did not load</span>`;
+  renderDownloads();
+}
+
+// KPI row: the rolling averages the page has always shown, for the active region and basis. Each
+// tile gives the average RRP, the average peak RRP, and the months it covers.
+function kpiTile(value, label, note) {
+  return `<div class="bg-surface px-5 py-4"><div class="kpi-value">${value}</div>` +
+    `<div class="kpi-label">${label}</div>` +
+    `<div class="mt-2 text-[12px] leading-4 text-faint num">${note}</div></div>`;
+}
+
+function renderKpis() {
+  const name = REGIONS[activeRegion];
+  const rows = regionRows();
+  const real = priceMode === 'real';
+  document.getElementById('kpi-title').textContent = `${name} at a glance`;
+  if (!rows.length) {
+    document.getElementById('kpi-sub').textContent = `No rows for ${activeRegion} in the data file`;
+    kpiState(`No months for ${name}`, `${CSV_PATH} has no rows for ${activeRegion}, so there is nothing to summarise for this region.`);
+    return;
+  }
+  const last = rows[rows.length - 1].year_month;
+  const base = cpiBase();
+  document.getElementById('kpi-sub').textContent =
+    `Average monthly price over the latest 1, 3, 5 and 10 years to ${formatMonth(last)} · ` +
+    (real ? `real${base ? ', ' + formatMonth(base) + ' dollars' : ''}` : 'nominal');
+
+  const rrpCol = getCol('rrp');
+  const peakCol = getCol('peak_rrp');
+  document.getElementById('kpis').innerHTML = ROLLING.map(period => {
+    const needed = period * 12;
+    const label = `${period}-year average RRP`;
+    if (rows.length < needed) return kpiTile('N/A', label, `only ${rows.length} months of data`);
+    const recent = rows.slice(-needed);
+    const avgRrp = mean2(recent.map(r => parseFloat(r[rrpCol] || 0)));
+    const avgPeak = mean2(recent.map(r => parseFloat(r[peakCol] || 0)));
+    return kpiTile(usd(avgRrp), label,
+      `<span class="text-muted">Peak ${usd(avgPeak)}</span> · ${formatMonth(recent[0].year_month)} – ${formatMonth(last)}`);
+  }).join('');
 }
 
 function renderTabs() {
@@ -111,103 +254,170 @@ function renderTabs() {
   container.innerHTML = '';
   for (const [id, name] of Object.entries(REGIONS)) {
     const btn = document.createElement('button');
-    btn.className = 'tab' + (id === activeRegion ? ' active' : '');
+    btn.type = 'button';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', id === activeRegion ? 'true' : 'false');
+    btn.className = 'seg-item max-sm:h-8 max-sm:px-3' + (id === activeRegion ? ' seg-item-active' : '');
     btn.textContent = name;
-    btn.onclick = () => { activeRegion = id; render(); };
+    btn.onclick = () => { activeRegion = id; renderTabs(); renderDownloads(); if (allData.length) { renderKpis(); renderTable(); } };
     container.appendChild(btn);
   }
 }
 
 function renderToggle() {
-  document.querySelectorAll('#price-toggle .toggle').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.mode === priceMode);
-    btn.onclick = () => { priceMode = btn.dataset.mode; render(); };
+  document.querySelectorAll('#price-toggle [data-mode]').forEach(btn => {
+    const on = btn.dataset.mode === priceMode;
+    btn.classList.toggle('seg-item-active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
 
-function renderCards() {
-  const container = document.getElementById('cards');
-  const rows = allData.filter(r => r.region === activeRegion).sort((a, b) => a.year_month.localeCompare(b.year_month));
-  if (!rows.length) { container.innerHTML = ''; return; }
+document.querySelectorAll('#price-toggle [data-mode]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    priceMode = btn.dataset.mode;
+    renderToggle();
+    if (allData.length) { renderKpis(); renderTable(true); }
+  });
+});
 
-  const rrpCol = getCol('rrp');
-  const peakCol = getCol('peak_rrp');
-
-  let html = '';
-  for (const period of ROLLING) {
-    const needed = period * 12;
-    if (rows.length < needed) continue;
-    const recent = rows.slice(-needed);
-    const avgRrp = recent.reduce((s, r) => s + parseFloat(r[rrpCol] || 0), 0) / recent.length;
-    const avgPeak = recent.reduce((s, r) => s + parseFloat(r[peakCol] || 0), 0) / recent.length;
-    html += `<div class="card"><div class="card-label">${period}-Year Avg RRP</div><div class="card-value">$${avgRrp.toFixed(2)}</div><div class="card-sub">${priceMode === 'real' ? 'Real' : 'Nominal'}</div></div>`;
-    html += `<div class="card"><div class="card-label">${period}-Year Avg Peak</div><div class="card-value">$${avgPeak.toFixed(2)}</div><div class="card-sub">${priceMode === 'real' ? 'Real' : 'Nominal'}</div></div>`;
-  }
-  container.innerHTML = html;
-}
-
-function renderTable() {
+function renderTable(keepScroll) {
   const thead = document.getElementById('thead');
   const tbody = document.getElementById('tbody');
-
   const rrpCol = getCol('rrp');
   const peakCol = getCol('peak_rrp');
+  thead.innerHTML = '<tr><th class="th sticky left-0 z-20 border-r" scope="col">Month</th>' +
+    '<th class="th text-right" scope="col">RRP ($/MWh)</th>' +
+    '<th class="th text-right" scope="col">Peak RRP ($/MWh)</th></tr>';
 
-  thead.innerHTML = '<tr><th>Month</th><th>RRP ($/MWh)</th><th>Peak RRP ($/MWh)</th></tr>';
+  const rows = regionRows();
+  const real = priceMode === 'real';
+  renderBadges(rows);
+  renderBasisNote(rows);
+  if (!rows.length) {
+    tbody.innerHTML = '';
+    tableState(stateHTML(`No months for ${REGIONS[activeRegion]}`,
+      `${CSV_PATH} loaded, but it has no rows for ${activeRegion}. The other regions are unaffected; this one fills in when the data update writes its rows.`));
+    return;
+  }
 
-  const rows = allData.filter(r => r.region === activeRegion).sort((a, b) => a.year_month.localeCompare(b.year_month));
-
-  // Compute min/max for heatmap
-  const rrpVals = rows.map(r => parseFloat(r[rrpCol]) || 0);
-  const peakVals = rows.map(r => parseFloat(r[peakCol]) || 0);
-  const allVals = rrpVals.concat(peakVals);
-  const min = Math.min(...allVals);
-  const max = Math.max(...allVals);
-
+  const wrap = document.querySelector('.table-wrap');
+  const prevTop = wrap.scrollTop;
+  const cell = col => v => {
+    const val = parseFloat(v[col]);
+    if (isNaN(val)) return '<td class="td-num whitespace-nowrap text-faint">N/A</td>';
+    return `<td class="td-num seq-${heatStep(val)} whitespace-nowrap border-l border-l-surface border-b-surface">${usd(val)}</td>`;
+  };
+  const rrpCell = cell(rrpCol), peakCell = cell(peakCol);
   tbody.innerHTML = rows.map(row => {
-    const rrp = parseFloat(row[rrpCol]) || 0;
-    const peak = parseFloat(row[peakCol]) || 0;
-    const carbon = row.carbon_flag === 'True' ? ' class="carbon"' : '';
-    const rrpBg = priceColor(rrp, min, max);
-    const peakBg = priceColor(peak, min, max);
-    return `<tr${carbon}><td>${formatMonth(row.year_month)}</td><td style="background:${rrpBg};color:${textColor(rrp,min,max)}">$${rrp.toFixed(2)}</td><td style="background:${peakBg};color:${textColor(peak,min,max)}">$${peak.toFixed(2)}</td></tr>`;
+    const carbon = row.carbon_flag === 'True';
+    const est = real && row.cpi_estimated === 'True';
+    const month = formatMonth(row.year_month);
+    const label =
+      (carbon ? '<span class="badge-dot mr-2 text-accent" aria-hidden="true"></span>' : '') + month +
+      (carbon ? '<span class="sr-only"> (carbon price period)</span>' : '') +
+      (est ? ' <span class="text-faint" title="CPI not yet published for this month, so real = nominal">†<span class="sr-only"> CPI not yet published, real equals nominal</span></span>' : '');
+    return `<tr class="group"><th class="td sticky left-0 z-[1] whitespace-nowrap border-r border-r-line ${carbon ? 'bg-accent-wash' : 'bg-surface group-hover:bg-surface-2'} text-left font-medium text-ink" scope="row">${label}</th>` +
+      rrpCell(row) + peakCell(row) + '</tr>';
   }).join('');
 
-  document.getElementById('table').style.display = '';
-  document.getElementById('loading').style.display = 'none';
+  tableState('');
+  // Rows run oldest → newest; open on the newest months, under the sticky header. A basis switch
+  // keeps the reader where they were: the rows are the same, only the figures change.
+  wrap.scrollTop = keepScroll ? prevTop : wrap.scrollHeight;
 }
 
+// Counts the page already knows, for the active region: rows (months), their span, the basis.
+function renderBadges(rows) {
+  const box = document.getElementById('badges');
+  // The served shell carries placeholder .badge chips so the card head reserves its loaded height;
+  // they go the moment the real counts exist.
+  box.classList.remove('placeholder-badges');
+  if (!rows.length) { box.innerHTML = ''; return; }
+  const base = cpiBase();
+  box.innerHTML =
+    `<span class="badge num">${rows.length} months</span>` +
+    `<span class="badge num">${formatMonth(rows[0].year_month)} – ${formatMonth(rows[rows.length - 1].year_month)}</span>` +
+    `<span class="badge num">${priceMode === 'real' ? 'Real' + (base ? ' · ' + formatMonth(base) + ' dollars' : '') : 'Nominal'}</span>`;
+}
+
+// One line under the legend: what the basis means, and which months are not yet CPI-adjusted.
+function renderBasisNote(rows) {
+  const el = document.getElementById('basis-note');
+  if (priceMode !== 'real') { el.textContent = 'Nominal = prices as traded'; return; }
+  const base = cpiBase();
+  const est = rows.filter(r => r.cpi_estimated === 'True').length;
+  el.textContent = `Real = CPI-adjusted to ${base ? formatMonth(base) : 'the latest CPI quarter'} dollars` +
+    (est ? ` · † the latest ${est} month${est === 1 ? '' : 's'} await CPI, so real = nominal` : '');
+}
+
+// The six workbooks: the active region's first (primary), then All States, then the other four.
 function renderDownloads() {
   const container = document.getElementById('downloads');
   const repoBase = 'https://github.com/cutout-z/aemo-historical-prices/raw/main/outputs/';
-  container.innerHTML = '<strong style="width:100%;margin-bottom:4px">Download Excel:&nbsp;</strong>' +
-    Object.entries(REGIONS).map(([id, name]) =>
-      `<a class="dl-btn" href="${repoBase}${EXCEL_FILES[id]}" download>${name}</a>`
-    ).join('') +
-    `<a class="dl-btn" href="${repoBase}All_States_historical_prices.xlsx" download style="border-color:var(--accent);font-weight:600">All States</a>`;
+  const icon = '<svg class="size-3.5 opacity-70" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>';
+  const name = REGIONS[activeRegion];
+  document.getElementById('dl-sub').textContent =
+    `Excel · the ${name} workbook (summary, monthly data and heatmap), All States (a monthly sheet per region), or another region`;
+  const others = Object.entries(REGIONS).filter(([id]) => id !== activeRegion);
+  container.innerHTML =
+    `<a class="btn btn-primary" href="${repoBase}${EXCEL_FILES[activeRegion]}" download>${icon}${name} workbook</a>` +
+    `<a class="btn" href="${repoBase}All_States_historical_prices.xlsx" download>${icon}All States</a>` +
+    '<span class="mx-1 hidden h-5 w-px bg-line sm:inline-block" aria-hidden="true"></span>' +
+    '<span class="eyebrow ml-1 mr-0.5 w-full sm:ml-0 sm:w-auto">Other regions</span>' +
+    others.map(([id, n]) =>
+      `<a class="btn btn-ghost" href="${repoBase}${EXCEL_FILES[id]}" download>${icon}${n}</a>`
+    ).join('');
 }
 
-function render() {
-  renderTabs();
-  renderToggle();
-  renderCards();
-  renderTable();
+// Theme toggle: remembered per viewer; the tokens flip every surface and the heat ramp.
+function syncThemeButtons() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  document.querySelectorAll('[data-theme-set]').forEach(b => {
+    const on = b.dataset.themeSet === cur;
+    b.classList.toggle('seg-item-active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
+document.querySelectorAll('[data-theme-set]').forEach(b => b.addEventListener('click', () => {
+  document.documentElement.setAttribute('data-theme', b.dataset.themeSet);
+  try { localStorage.setItem('aemo-historical-prices:theme', b.dataset.themeSet); } catch (e) {}
+  syncThemeButtons();
+}));
+syncThemeButtons();
+
+// The region switch and the workbook links do not depend on the CSV: render them before it arrives.
+renderTabs();
+renderToggle();
+renderDownloads();
 
 Papa.parse('outputs/summary.csv', {
   download: true,
   header: true,
   skipEmptyLines: true,
   complete: function(results) {
-    allData = results.data;
+    allData = results.data.filter(r => r.region && r.year_month);
+    if (!allData.length) {
+      loadFailed('The data file has no rows',
+        `${CSV_PATH} loaded but holds no region/month rows, so there is nothing to show. It is rewritten by the data update lane; the next successful run restores it.`);
+      return;
+    }
+    // Find latest month for footer
     const months = [...new Set(allData.map(r => r.year_month))].sort();
     const latest = months[months.length - 1];
-    document.getElementById('footer').textContent = `Data through ${formatMonth(latest)} · Updates monthly on the 3rd · Source: AEMO aggregated price & demand data`;
-    render();
-    renderDownloads();
+    const dot = '<span aria-hidden="true">·</span>';
+    document.getElementById('footer').innerHTML =
+      `<span>${SOURCE}</span>` + dot +
+      `<span class="text-muted">as of ${formatMonth(latest)}</span>` + dot +
+      "<span>Checked daily; only complete months are shown, and a month appears once AEMO publishes it</span>";
+    renderKpis();
+    renderTable();
   },
   error: function() {
-    document.getElementById('loading').textContent = 'Failed to load data. Check that outputs/summary.csv exists.';
+    loadFailed('The data file did not load',
+      `This page reads ${CSV_PATH} from the same site, and that request failed, so no months can be shown. ` +
+      'On the published site the file is committed to main by the data update lane — check it is there. ' +
+      'On a local copy, serve the folder over HTTP (<code class="mono text-ink">python3 -m http.server</code>) instead of opening index.html as a file. ' +
+      'The workbook downloads below link to the repository directly.');
   }
 });
 </script>
