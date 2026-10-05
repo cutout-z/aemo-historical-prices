@@ -9,7 +9,7 @@ Automated analysis of NEM spot electricity prices across all five regions (NSW, 
 ## What It Does
 
 - Downloads monthly aggregated price data from AEMO (Jul 2003 to present)
-- Calculates mean RRP and peak-hour RRP (7am–10pm weekdays AEST) for each region
+- Calculates mean RRP and peak-hour RRP (Mon–Fri 07:00–22:00 AEST) for each region
 - Applies CPI adjustment using the RBA Consumer Price Index to produce real (constant-dollar) prices
 - Generates per-region Excel workbooks with rolling averages, monthly data, and heatmaps
 - Checks daily for newly published or corrected monthly AEMO data via the scheduled NAS lane. Only complete months are shown — the current in-progress month is excluded.
@@ -141,7 +141,7 @@ If any check fails, the NAS lane or manual fallback workflow exits before commit
 
 ## Notes
 
-- **Peak hours**: 7am–10pm weekdays AEST (standard NEM definition)
+- **Peak hours**: Mon–Fri 07:00–22:00 AEST, public holidays included. AEMO stamps each interval with its end time, so an interval counts as peak when it ends after 07:00 and at or before 22:00 (the 30-min interval covering 21:30–22:00 is in; the one covering 06:30–07:00 is out)
 - **Carbon tax period** (Jul 2012 – Jun 2014) is flagged in outputs
 - **Data format change**: Pre-Oct 2021 files use 30-min intervals without headers; Oct 2021+ use 5-min intervals with headers. Both are handled automatically.
 - TAS data starts May 2005 (Tasmania joined the NEM later)

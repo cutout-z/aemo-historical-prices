@@ -24,11 +24,11 @@ REGION_START_DATES = {
     "TAS1": datetime(2005, 5, 1),
 }
 
-# Peak hours: 7am-10pm weekdays AEST (standard NEM definition)
-# Since SETTLEMENTDATE marks interval END, hour 7 means the 06:30-07:00 interval.
-# We want intervals ending 07:00 through 22:00 (i.e. covering 07:00-22:00 period).
-PEAK_START_HOUR = 7   # inclusive
-PEAK_END_HOUR = 22    # exclusive (last included = 21)
+# Peak hours: Mon-Fri 07:00-22:00 AEST (public holidays are not excluded).
+# SETTLEMENTDATE marks the interval END, so an interval is peak when its end stamp is after
+# PEAK_START_HOUR:00 and at or before PEAK_END_HOUR:00 (see analyse.is_peak).
+PEAK_START_HOUR = 7   # window opens here: an interval ending exactly 07:00 is off-peak
+PEAK_END_HOUR = 22    # window closes here: an interval ending exactly 22:00 is peak
 
 # Carbon tax period (for flagging in outputs)
 CARBON_TAX_START = datetime(2012, 7, 1)
