@@ -66,3 +66,21 @@ are the values the old outputs carried.
   −0.41 → +11.53). Separate decision.
 - The other audit findings (TAS 2005-05 partial month, validator strength, guard behaviour on healed
   gaps, README example, rolling-period lists): see `logic-pass-2026-10-05.md`.
+
+## Execution record — 2026-10-05
+
+Steps 1–4 were run on `fix/peak-window`; step 5 (merge + push) waits for a go-ahead.
+
+- Tag `pre-peak-window-fix` created on `origin/main` (`1194475`) and pushed.
+- `--full-refresh` from an empty `data/`: 1,374 raw files, ~7 minutes, 0 errors, 1,373 rows.
+- `compare-summaries.py` against the old file: keys identical; `rrp_nominal`, `rrp_real`,
+  `total_intervals`, `carbon_flag`, `cpi_estimated` unchanged on every row. **One expected exception:**
+  `peak_intervals` for TAS1 2005-05 (the known partial month, 346 → 347).
+- Independent check: peak recomputed from all 1,373 raw files by interval *start* time (a different
+  method from the pipeline's end-stamp logic): 0 disagreements in price or count.
+- Workbooks vs new `summary.csv`: 0 disagreeing peak cells (nominal and real, all five regions).
+- `validate_outputs.py` and `test_peak_window.py` pass.
+- Restatement: 1,352 of 1,373 rows moved (peak only); median |Δ| 0.46%, mean −0.8%; 314 rows
+  moved >1%, 24 >5%, 3 >20% (TAS 2010-11 38.48 → 19.55; QLD 2015-07 58.91 → 41.74 — a price spike
+  in an edge interval). The one negative peak is now SA 2025-12 at −$0.04 (was −$0.41).
+  Page headline peak averages moved by at most ~$0.75 (NSW 10-year: 115.11 → 114.46).
