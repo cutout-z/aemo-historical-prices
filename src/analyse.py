@@ -12,15 +12,23 @@ logger = logging.getLogger(__name__)
 def is_peak(dt_series: pd.Series) -> pd.Series:
     """Return boolean mask for peak intervals.
 
-    Peak = weekdays (Mon-Fri), hours 7-21 (7am-10pm AEST).
-    NEM uses AEST year-round. SETTLEMENTDATE marks interval END.
-    Hour 7 = interval ending at 07:00 (covers 06:30-07:00 for 30-min or 06:55-07:00 for 5-min).
-    We include hours 7 through 21 inclusive.
+    Peak = Mon-Fri, 07:00-22:00 AEST (public holidays are NOT excluded).
+    NEM uses AEST year-round. SETTLEMENTDATE marks the interval END, so an interval belongs to
+    the 07:00-22:00 window when it ENDS after 07:00 and at or before 22:00:
+      - 30-min data (to Sep 2021): the first peak interval ends 07:30 (covers 07:00-07:30) and
+        the last ends 22:00 (covers 21:30-22:00).
+      - 5-min data (from Oct 2021): the first ends 07:05 and the last ends 22:00.
+    The interval ending exactly 07:00 covers 06:30-07:00 (or 06:55-07:00) and is off-peak.
+    Every peak interval ends on the same calendar day it starts, so the weekday of the end stamp
+    is the weekday of the interval.
     """
     weekday = dt_series.dt.dayofweek < 5  # Mon=0 to Fri=4
-    hour = dt_series.dt.hour
-    peak_hour = (hour >= config.PEAK_START_HOUR) & (hour < config.PEAK_END_HOUR)
-    return weekday & peak_hour
+    minute_of_day = dt_series.dt.hour * 60 + dt_series.dt.minute
+    in_window = (
+        (minute_of_day > config.PEAK_START_HOUR * 60)
+        & (minute_of_day <= config.PEAK_END_HOUR * 60)
+    )
+    return weekday & in_window
 
 
 def calculate_monthly_stats(df: pd.DataFrame, region: str,
