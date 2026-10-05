@@ -3,7 +3,7 @@
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta, date
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -82,7 +82,14 @@ def _assert_settled_history_unchanged(
     after: pd.DataFrame,
     mutable_months: set[str],
 ) -> None:
-    """Protect settled nominal history while allowing CPI columns to refresh."""
+    """Protect settled nominal history while allowing CPI columns to refresh.
+
+    Rules, per (region, month) key outside the mutable window:
+      1. a settled key present before must still be present after (nothing vanishes);
+      2. its protected values must be unchanged;
+      3. a key that is NEW (an earlier download failure healing, e.g. one region's file that was
+         missing last time) is allowed and logged -- it is not a change to settled history.
+    """
     if before is None or before.empty or after.empty:
         return
 
@@ -101,21 +108,42 @@ def _assert_settled_history_unchanged(
         return
 
     before_protected = before[~before["year_month"].isin(mutable_months)][protected_cols]
-    after_protected = after[after["year_month"].isin(before_protected["year_month"])][protected_cols]
-    before_protected = before_protected.sort_values(key_cols).reset_index(drop=True)
-    after_protected = after_protected.sort_values(key_cols).reset_index(drop=True)
+    after_protected = after[protected_cols]
 
+    joined = before_protected.merge(
+        after_protected, on=key_cols, how="outer", suffixes=("_before", "_after"), indicator=True
+    )
+
+    vanished = joined[joined["_merge"] == "left_only"]
+    if not vanished.empty:
+        sample = vanished[key_cols].head(5).values.tolist()
+        raise RuntimeError(
+            f"Historical price run dropped {len(vanished)} settled region-month row(s) outside "
+            f"the mutable window, e.g. {sample}. Use --full-refresh only for deliberate audited rewrites."
+        )
+
+    both = joined[joined["_merge"] == "both"]
+    value_cols = [c for c in protected_cols if c not in key_cols]
+    left = both[[f"{c}_before" for c in value_cols]].set_axis(value_cols, axis=1)
+    right = both[[f"{c}_after" for c in value_cols]].set_axis(value_cols, axis=1)
     try:
-        assert_frame_equal(before_protected, after_protected, check_dtype=False)
+        assert_frame_equal(
+            left.reset_index(drop=True), right.reset_index(drop=True), check_dtype=False
+        )
     except AssertionError as exc:
         raise RuntimeError(
             "Historical price run attempted to change settled nominal months outside "
             "the mutable window. Use --full-refresh only for deliberate audited rewrites."
         ) from exc
 
+    # A new key outside the mutable window is a gap healing (the latest month is inside the window).
+    healed = joined[(joined["_merge"] == "right_only") & ~joined["year_month"].isin(mutable_months)]
+    if not healed.empty:
+        logger.info("Settled-history guard: %d previously missing region-month row(s) filled in", len(healed))
+
     logger.info(
         "Settled-history guard: %d protected region-month rows unchanged",
-        len(before_protected),
+        len(both),
     )
 
 
@@ -145,8 +173,10 @@ def run(full_refresh: bool = False, months_back: int = 1):
 
     latest_year, latest_month = latest
 
-    # Never include the in-progress current month — only show complete months.
-    today = date.today()
+    # Never include the in-progress current month — only show complete months. "Current" is NEM
+    # time (fixed AEST), not the runner's local clock. A month that slips through anyway is still
+    # rejected by analyse_month unless it holds exactly every interval.
+    today = config.nem_now().date()
     if (latest_year, latest_month) == (today.year, today.month):
         prev = today.replace(day=1) - timedelta(days=1)
         latest_year, latest_month = prev.year, prev.month
@@ -170,7 +200,7 @@ def run(full_refresh: bool = False, months_back: int = 1):
         for region in config.REGIONS:
             ym = f"{year}-{month:02d}"
 
-            # Skip months before region's start date (e.g. TAS before May 2005)
+            # Skip months before region's start date (e.g. TAS before Jun 2005)
             region_start = config.REGION_START_DATES[region]
             if (year, month) < (region_start.year, region_start.month):
                 continue
@@ -184,7 +214,7 @@ def run(full_refresh: bool = False, months_back: int = 1):
                     month,
                     region,
                     cache_dir,
-                    force=(not full_refresh and ym in force_months),
+                    force=(full_refresh or ym in force_months),
                 )
                 if raw_df.empty:
                     logger.warning(f"No data for {region} {ym}, skipping")
@@ -236,7 +266,7 @@ def main():
     parser.add_argument(
         "--full-refresh",
         action="store_true",
-        help="Re-download all data from Jul 2003 (default: incremental update)",
+        help="Re-download ALL raw data from Jul 2003, ignoring the local cache, and rebuild every row (default: incremental update)",
     )
     parser.add_argument(
         "--months-back",

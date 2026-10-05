@@ -1,23 +1,35 @@
 """Post-pipeline validation for AEMO Historical Prices.
 
-Checks summary.csv and regional Excel workbooks for data integrity
-before committing to the repository. Exits non-zero on any failure.
+Checks summary.csv and the Excel workbooks for integrity before anything is committed. Exits
+non-zero on any failure. The checks are exact wherever the right answer is deterministic:
+
+* every month holds EXACTLY days x 48 (30-min, before Oct 2021) or days x 288 (5-min) intervals, and
+  exactly weekdays x 30 / x 180 peak intervals -- no exemptions, including the latest month;
+* each region is contiguous from its configured start to a common end month;
+* the CPI columns obey their own invariants (flag is a suffix, real == nominal when flagged, one
+  CPI ratio per month across regions and across the RRP / peak columns);
+* the carbon flag covers exactly Jul 2012 - Jun 2014;
+* every workbook agrees with summary.csv.
 """
 
+import calendar
 import sys
 from pathlib import Path
 
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src import config  # noqa: E402
+
 OUTPUTS_DIR = Path(__file__).parent.parent / "outputs"
-REGIONS = ["NSW1", "QLD1", "VIC1", "SA1", "TAS1"]
-REGION_NAMES = {"NSW1": "NSW", "QLD1": "QLD", "VIC1": "VIC", "SA1": "SA", "TAS1": "TAS"}
-# Oct 2021: NEM switched from 30-min to 5-min settlement intervals
-FORMAT_CHANGE = "2021-10"
-# First month each region entered the NEM — always partial, exempt from interval checks
-REGION_FIRST_MONTHS = {
-    "TAS1": "2005-05",  # TAS joined NEM mid-May 2005
-}
+REGIONS = list(config.REGIONS)
+REGION_NAMES = dict(config.REGION_NAMES)
+FORMAT_CHANGE = config.FORMAT_CHANGE_DATE.strftime("%Y-%m")  # NEM moved from 30-min to 5-min
+CARBON_FIRST, CARBON_LAST = "2012-07", "2014-06"
+PRICE_COLS = ["rrp_nominal", "peak_rrp_nominal", "rrp_real", "peak_rrp_real"]
+# The market price floor is -$1,000/MWh: no monthly mean can be below it.
+MARKET_FLOOR = -1000.0
 
 errors = []
 
@@ -27,6 +39,24 @@ def check(condition, msg):
         errors.append(msg)
         print(f"  FAIL: {msg}")
     return condition
+
+
+def _weekdays_in_month(year_month: str) -> int:
+    y, m = int(year_month[:4]), int(year_month[5:])
+    return sum(1 for d in range(1, calendar.monthrange(y, m)[1] + 1) if calendar.weekday(y, m, d) < 5)
+
+
+def _expected_intervals(year_month: str) -> int:
+    return config.expected_interval_count(int(year_month[:4]), int(year_month[5:]))
+
+
+def _expected_peak(year_month: str) -> int:
+    per_day = 180 if year_month >= FORMAT_CHANGE else 30   # 15 peak hours x 12 (5-min) or x 2 (30-min)
+    return _weekdays_in_month(year_month) * per_day
+
+
+def _month_range(first: str, last: str) -> list[str]:
+    return [p.strftime("%Y-%m") for p in pd.period_range(first, last, freq="M")]
 
 
 def validate():
@@ -40,79 +70,122 @@ def validate():
 
     # --- Structure ---
     check(len(df) > 0, "summary.csv is empty")
-    required_cols = ["region", "year_month", "rrp_nominal", "peak_rrp_nominal",
-                     "total_intervals", "peak_intervals"]
-    for col in required_cols:
-        check(col in df.columns, f"Missing column: {col}")
+    required_cols = ["region", "year_month", *PRICE_COLS, "total_intervals", "peak_intervals",
+                     "carbon_flag", "cpi_estimated"]
+    missing = [c for c in required_cols if c not in df.columns]
+    for col in missing:
+        check(False, f"Missing column: {col}")
+    if missing or df.empty:
+        return
 
     # --- All 5 regions present ---
     regions_present = set(df["region"].unique())
     for r in REGIONS:
         check(r in regions_present, f"Region {r} missing from summary.csv")
 
-    # --- Interval counts in expected range ---
-    if "total_intervals" in df.columns and "year_month" in df.columns:
-        # Exclude the latest month (safety net: guards against manual mid-month runs)
-        # and each region's first month (partial due to NEM entry date mid-month)
-        latest_ym = df["year_month"].max()
-        first_month_mask = df.apply(
-            lambda r: REGION_FIRST_MONTHS.get(r["region"]) == r["year_month"], axis=1
-        )
-        checkable = df[(df["year_month"] != latest_ym) & ~first_month_mask]
-
-        pre_change = checkable[checkable["year_month"] < FORMAT_CHANGE]
-        post_change = checkable[checkable["year_month"] >= FORMAT_CHANGE]
-
-        if len(pre_change) > 0:
-            bad_pre = pre_change[
-                (pre_change["total_intervals"] < 1100) | (pre_change["total_intervals"] > 1700)
-            ]
-            check(
-                len(bad_pre) == 0,
-                f"{len(bad_pre)} pre-Oct 2021 rows have interval counts outside [1100, 1700]",
-            )
-
-        if len(post_change) > 0:
-            bad_post = post_change[
-                (post_change["total_intervals"] < 7000) | (post_change["total_intervals"] > 10000)
-            ]
-            check(
-                len(bad_post) == 0,
-                f"{len(bad_post)} post-Oct 2021 rows have interval counts outside [7000, 10000]",
-            )
-
-    # --- Peak intervals <= total intervals ---
-    if "peak_intervals" in df.columns and "total_intervals" in df.columns:
-        violations = df[df["peak_intervals"] > df["total_intervals"]]
-        check(
-            len(violations) == 0,
-            f"{len(violations)} rows have peak_intervals > total_intervals",
-        )
-
-    # --- Prices non-negative ---
-    for col in ["rrp_nominal", "peak_rrp_nominal"]:
-        if col in df.columns:
-            # Negative average prices can legitimately occur in the NEM
-            # but sustained negative averages over a full month would be anomalous
-            vals = df[col].dropna()
-            check(
-                vals.min() > -500,
-                f"{col} has extreme negative value (min={vals.min():.2f})",
-            )
-
     # --- No duplicate region/month ---
-    if "region" in df.columns and "year_month" in df.columns:
-        dupes = df.duplicated(subset=["region", "year_month"], keep=False)
-        check(dupes.sum() == 0, f"{dupes.sum()} duplicate region/month rows")
+    dupes = df.duplicated(subset=["region", "year_month"], keep=False)
+    check(dupes.sum() == 0, f"{dupes.sum()} duplicate region/month rows")
 
-    # --- Regional Excel workbooks exist ---
+    # --- Values present and finite ---
+    for col in PRICE_COLS:
+        vals = pd.to_numeric(df[col], errors="coerce")
+        check(vals.notna().all() and vals.abs().lt(float("inf")).all(),
+              f"{col} has {int(vals.isna().sum())} missing / non-numeric value(s)")
+        check(vals.min() >= MARKET_FLOOR, f"{col} is below the market floor (min={vals.min():.2f})")
+    check((df["rrp_real"] > 0).all(), "rrp_real has non-positive values")
+
+    # --- Contiguity: each region runs unbroken from its start to ONE common end month ---
+    ends = df.groupby("region")["year_month"].max()
+    check(ends.nunique() == 1, f"regions end on different months: {ends.to_dict()}")
+    common_end = ends.max()
+    for region in REGIONS:
+        have = sorted(df.loc[df["region"] == region, "year_month"])
+        if not have:
+            continue
+        start = config.REGION_START_DATES[region].strftime("%Y-%m")
+        want = _month_range(start, common_end)
+        check(have == want,
+              f"{region} is not contiguous {start}..{common_end}: "
+              f"{len(set(want) - set(have))} missing, {len(set(have) - set(want))} unexpected")
+
+    # --- Interval counts: exact for every month, no exemptions ---
+    exp_total = df["year_month"].map(_expected_intervals)
+    bad_total = df[df["total_intervals"] != exp_total]
+    check(bad_total.empty,
+          f"{len(bad_total)} rows have an incomplete / wrong interval count, e.g. "
+          f"{bad_total[['region', 'year_month', 'total_intervals']].head(3).values.tolist()}")
+
+    exp_peak = df["year_month"].map(_expected_peak)
+    bad_peak = df[df["peak_intervals"] != exp_peak]
+    check(bad_peak.empty,
+          f"{len(bad_peak)} rows have the wrong number of peak intervals, e.g. "
+          f"{bad_peak[['region', 'year_month', 'peak_intervals']].head(3).values.tolist()}")
+
+    # --- Carbon flag: exactly Jul 2012 - Jun 2014 ---
+    flag = df["carbon_flag"].astype(str).str.lower().eq("true")
+    want_flag = (df["year_month"] >= CARBON_FIRST) & (df["year_month"] <= CARBON_LAST)
+    check((flag == want_flag).all(), f"carbon_flag differs from {CARBON_FIRST}..{CARBON_LAST} on "
+                                    f"{int((flag != want_flag).sum())} rows")
+
+    # --- CPI invariants ---
+    est = df["cpi_estimated"].astype(str).str.lower().eq("true")
+    for region in REGIONS:
+        r = est[df["region"] == region].values[
+            df.loc[df["region"] == region, "year_month"].argsort().values]
+        # once True, always True: months without CPI are only ever the most recent ones
+        check(not any(a and not b for a, b in zip(r, r[1:])),
+              f"{region}: cpi_estimated is not a suffix of the series")
+    est_sets = df[est].groupby("region")["year_month"].apply(frozenset)
+    check(len(set(est_sets)) <= 1, "regions disagree on which months are cpi_estimated")
+    flagged = df[est]
+    check((flagged["rrp_real"] == flagged["rrp_nominal"]).all()
+          and (flagged["peak_rrp_real"] == flagged["peak_rrp_nominal"]).all(),
+          "a cpi_estimated month has real != nominal (it must carry ratio 1)")
+    check(est.mean() < 0.05, f"{est.mean():.1%} of rows are cpi_estimated (CPI fetch may have failed)")
+
+    ok = df[~est & (df["rrp_nominal"] >= 5)].copy()
+    ok["ratio"] = ok["rrp_real"] / ok["rrp_nominal"]
+    spread = ok.groupby("year_month")["ratio"].agg(lambda x: x.max() - x.min())
+    check((spread <= 0.003).all(),
+          f"the CPI ratio differs between regions in {int((spread > 0.003).sum())} month(s), "
+          f"e.g. {spread[spread > 0.003].head(3).round(4).to_dict()}")
+    pk = df[~est & (df["peak_rrp_nominal"] >= 20) & (df["rrp_nominal"] >= 5)].copy()
+    drift = (pk["peak_rrp_real"] / pk["peak_rrp_nominal"] - pk["rrp_real"] / pk["rrp_nominal"]).abs()
+    check((drift <= 0.003).all(),
+          f"peak and all-hours prices use different CPI ratios on {int((drift > 0.003).sum())} rows")
+
+    # --- Workbooks exist and agree with summary.csv ---
+    from openpyxl import load_workbook
+
     for region_id, name in REGION_NAMES.items():
         xlsx_path = OUTPUTS_DIR / f"{name}_historical_prices.xlsx"
-        check(xlsx_path.exists(), f"{xlsx_path.name} does not exist")
+        if not check(xlsx_path.exists(), f"{xlsx_path.name} does not exist"):
+            continue
+        want = df[df["region"] == region_id].sort_values("year_month")
+        wb = load_workbook(xlsx_path, read_only=True, data_only=True)
+        check(set(wb.sheetnames) == {"Summary", "Monthly Data", "Heatmap"},
+              f"{xlsx_path.name}: unexpected sheets {wb.sheetnames}")
+        if "Monthly Data" in wb.sheetnames:
+            rows = [r for r in wb["Monthly Data"].iter_rows(min_row=2, values_only=True) if r[0]]
+            check(len(rows) == len(want), f"{xlsx_path.name}: {len(rows)} data rows vs {len(want)} in summary.csv")
+            if len(rows) == len(want):
+                got = pd.DataFrame(rows).iloc[:, 1:5].astype(float).round(2).values
+                check((got == want[PRICE_COLS].round(2).values).all(),
+                      f"{xlsx_path.name}: prices differ from summary.csv")
+        wb.close()
 
-    # --- All-states workbook exists ---
     all_states_path = OUTPUTS_DIR / "All_States_historical_prices.xlsx"
-    check(all_states_path.exists(), "All_States_historical_prices.xlsx does not exist")
+    if check(all_states_path.exists(), "All_States_historical_prices.xlsx does not exist"):
+        wb = load_workbook(all_states_path, read_only=True, data_only=True)
+        check(wb.sheetnames == [REGION_NAMES[r] for r in REGIONS],
+              f"All_States workbook sheets are {wb.sheetnames}")
+        for region_id, name in REGION_NAMES.items():
+            if name in wb.sheetnames:
+                n = sum(1 for r in wb[name].iter_rows(min_row=2, values_only=True) if r[0])
+                want_n = int((df["region"] == region_id).sum())
+                check(n == want_n, f"All_States {name}: {n} rows vs {want_n} in summary.csv")
+        wb.close()
 
 
 if __name__ == "__main__":

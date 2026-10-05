@@ -1,6 +1,6 @@
 """Configuration for AEMO historical price analysis."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # NEM regions (AEMO region IDs)
 REGIONS = ["NSW1", "QLD1", "VIC1", "SA1", "TAS1"]
@@ -14,14 +14,16 @@ REGION_NAMES = {
     "TAS1": "TAS",
 }
 
-# Analysis start dates (TAS joined the NEM in May 2005)
+# Analysis start dates. TAS joined the NEM on 16 May 2005 and AEMO's first TAS file starts mid-month
+# (741 of 1,488 half-hour intervals), so its series starts with the first COMPLETE month, Jun 2005:
+# a partial month must not be published as a month (README: "only complete months").
 START_DATE = datetime(2003, 7, 1)
 REGION_START_DATES = {
     "NSW1": datetime(2003, 7, 1),
     "QLD1": datetime(2003, 7, 1),
     "VIC1": datetime(2003, 7, 1),
     "SA1": datetime(2003, 7, 1),
-    "TAS1": datetime(2005, 5, 1),
+    "TAS1": datetime(2005, 6, 1),
 }
 
 # Peak hours: Mon-Fri 07:00-22:00 AEST (public holidays are not excluded).
@@ -34,12 +36,12 @@ PEAK_END_HOUR = 22    # window closes here: an interval ending exactly 22:00 is 
 CARBON_TAX_START = datetime(2012, 7, 1)
 CARBON_TAX_END = datetime(2014, 6, 30)
 
-# Rolling average periods (years) for summary
-ROLLING_PERIODS = [1, 2, 3, 5, 10]
+# Rolling average periods (years) for the workbook Summary sheet. A period longer than a region's
+# history is written as an explicit "n/a" row, never silently dropped.
+ROLLING_PERIODS = [1, 2, 3, 5, 10, 15, 20]
 
-# AEMO aggregated price CSV URL pattern
-# Pre-Oct 2021: 30-min intervals, no header row
-# Oct 2021+: 5-min intervals, has header row
+# AEMO aggregated price CSV URL pattern. Every file has a header row.
+# Before Oct 2021 the intervals are 30-minute trading periods; from Oct 2021 they are 5-minute.
 AEMO_URL_PATTERN = (
     "https://aemo.com.au/aemo/data/nem/priceanddemand/"
     "PRICE_AND_DEMAND_{ym}_{region}.csv"
@@ -50,7 +52,6 @@ FORMAT_CHANGE_DATE = datetime(2021, 10, 1)
 
 # RBA CPI data
 RBA_CPI_URL = "https://www.rba.gov.au/statistics/tables/csv/g1-data.csv"
-RBA_CPI_SKIP_ROWS = 11  # metadata rows before data
 
 # Paths (relative to project root)
 DATA_DIR = "data"
@@ -60,3 +61,23 @@ SUMMARY_CSV = "outputs/summary.csv"
 # Network retry settings
 MAX_RETRIES = 3
 RETRY_BACKOFF = 5  # seconds
+
+
+# NEM time is fixed AEST (UTC+10, no daylight saving). Anything that asks "which month is it?"
+# must use it rather than the runner's local clock.
+NEM_UTC_OFFSET = timedelta(hours=10)
+
+
+def nem_now() -> datetime:
+    """Current wall-clock time in NEM time (naive datetime)."""
+    return (datetime.now(timezone.utc) + NEM_UTC_OFFSET).replace(tzinfo=None)
+
+
+def expected_interval_count(year: int, month: int) -> int:
+    """Exact number of price intervals in a complete month: days x 48 (30-min, before Oct 2021)
+    or days x 288 (5-min, from Oct 2021). AEMO's file for a month runs from 00:30 (00:05) on the
+    1st to 00:00 on the 1st of the next month, so it holds exactly this many rows."""
+    import calendar
+    days = calendar.monthrange(year, month)[1]
+    per_day = 288 if datetime(year, month, 1) >= FORMAT_CHANGE_DATE else 48
+    return days * per_day

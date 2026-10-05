@@ -32,12 +32,19 @@ def is_peak(dt_series: pd.Series) -> pd.Series:
 
 
 def calculate_monthly_stats(df: pd.DataFrame, region: str,
-                            year: int, month: int) -> dict:
+                            year: int, month: int) -> dict | None:
     """Calculate monthly mean RRP and peak RRP from interval data.
 
     Input: DataFrame with [SETTLEMENTDATE, RRP] for a single region/month.
     Output: dict with rrp_nominal, peak_rrp_nominal, interval counts.
+
+    Intervals with no usable RRP are dropped BEFORE counting, so a gap shows up as a short count
+    (and the month is then rejected as incomplete) instead of being counted but ignored by the mean.
     """
+    if df.empty:
+        return None
+
+    df = df[df["RRP"].notna()]
     if df.empty:
         return None
 
@@ -48,11 +55,12 @@ def calculate_monthly_stats(df: pd.DataFrame, region: str,
     peak_mask = is_peak(df["SETTLEMENTDATE"])
     peak_df = df[peak_mask]
     peak_intervals = len(peak_df)
-
-    if peak_intervals > 0:
-        peak_rrp_nominal = round(peak_df["RRP"].mean(), 2)
-    else:
-        peak_rrp_nominal = rrp_nominal  # Fallback if no peak intervals
+    if peak_intervals == 0:
+        # A real month always has peak intervals. Never substitute the all-hours mean for a
+        # missing peak: the figure would carry the wrong label.
+        logger.error(f"No peak intervals for {region} {year}-{month:02d}; month rejected")
+        return None
+    peak_rrp_nominal = round(peak_df["RRP"].mean(), 2)
 
     # Carbon tax flag
     month_date = pd.Timestamp(year, month, 1)
@@ -77,7 +85,11 @@ def analyse_month(raw_df: pd.DataFrame, region: str,
     """Full analysis pipeline for a single region/month.
 
     Input: DataFrame from download_month with [REGION, SETTLEMENTDATE, RRP, ...].
-    Output: dict of monthly statistics.
+    Output: dict of monthly statistics, or None when the month is empty or INCOMPLETE.
+
+    A month is complete only when it holds exactly the expected number of intervals
+    (config.expected_interval_count). A partial month is not published: the next run retries it
+    (the recent months are always re-downloaded), so a month appears once AEMO has published all of it.
     """
     if raw_df.empty:
         return None
@@ -86,27 +98,15 @@ def analyse_month(raw_df: pd.DataFrame, region: str,
     df = raw_df[["SETTLEMENTDATE", "RRP"]].copy()
 
     stats = calculate_monthly_stats(df, region, year, month)
+    if not stats:
+        return None
 
-    if stats:
-        _check_interval_count(region, year, month, stats["total_intervals"])
+    expected = config.expected_interval_count(year, month)
+    if stats["total_intervals"] != expected:
+        logger.warning(
+            f"Incomplete month {region} {year}-{month:02d}: {stats['total_intervals']} usable "
+            f"intervals, expected exactly {expected}; not published"
+        )
+        return None
 
     return stats
-
-
-def _check_interval_count(region: str, year: int, month: int, total: int):
-    """Log warning if interval count is outside expected range."""
-    # Pre-Oct 2021: 30-min intervals = 48/day × 28-31 days = 1344-1488
-    # Post-Oct 2021: 5-min intervals = 288/day × 28-31 days = 8064-8928
-    from datetime import datetime
-    if datetime(year, month, 1) >= config.FORMAT_CHANGE_DATE:
-        if total < 7500 or total > 9500:
-            logger.warning(
-                f"Unexpected interval count for {region} {year}-{month:02d}: "
-                f"{total} (expected ~8064-8928 for 5-min data)"
-            )
-    else:
-        if total < 1200 or total > 1600:
-            logger.warning(
-                f"Unexpected interval count for {region} {year}-{month:02d}: "
-                f"{total} (expected ~1344-1488 for 30-min data)"
-            )

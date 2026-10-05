@@ -30,7 +30,7 @@
       <button type="button" class="seg-item max-sm:h-8 max-sm:px-3" data-theme-set="light">Light</button>
     </div>
     <h1 class="col-span-2 mt-1.5 text-[22px] font-semibold leading-7 text-ink">AEMO Historical Prices</h1>
-    <p class="col-span-2 mt-1.5 max-w-[72ch] text-[13px] leading-5 text-muted">Monthly average NEM spot prices ($/MWh) — all intervals and peak hours (7am–10pm weekdays AEST), Jul 2003 to present</p>
+    <p class="col-span-2 mt-1.5 max-w-[72ch] text-[13px] leading-5 text-muted">Monthly average NEM spot prices ($/MWh) — all intervals and peak hours (7am–10pm weekdays AEST), Jul 2003 to present (Tasmania from Jun 2005)</p>
   </header>
 
   <section class="card mt-6 overflow-hidden" aria-labelledby="kpi-title">
@@ -147,9 +147,11 @@ function usd(v) {
   return (v < 0 ? '−$' : '$') + n;
 }
 
-// Mean of 2-decimal prices, rounded to the cent. Summing as integer cents keeps an exact half-cent
-// average (e.g. 141.965) from landing a hair under the tie in binary floats and rounding down.
+// Mean of 2-decimal prices, rounded to the cent, or null if ANY value in the window is missing.
+// Summed as integer cents so an exact half-cent average (e.g. 141.965) cannot land a hair under the
+// tie in binary floats and round down. A blank is missing data: it is never read as $0.
 function mean2(vals) {
+  if (vals.some(v => !isFinite(v))) return null;
   const cents = vals.reduce((s, v) => s + Math.round(v * 100), 0);
   return Math.round(cents / vals.length) / 100;
 }
@@ -165,6 +167,12 @@ function heatStep(price) {
   return i === -1 ? 7 : i;
 }
 
+// The CSV's flags are booleans written as text. Compare case-insensitively so a change of writer
+// ("true" / "True" / "TRUE") cannot silently turn the carbon markers and the CPI daggers off.
+function isTrue(v) {
+  return String(v == null ? '' : v).trim().toLowerCase() === 'true';
+}
+
 function getCol(base) {
   return base + '_' + priceMode;
 }
@@ -176,7 +184,8 @@ function regionRows() {
 // Real prices are in dollars of the latest CPI quarter. The last month the CPI actually covers is
 // that base; months after it are flagged cpi_estimated and carry real = nominal.
 function cpiBase() {
-  const covered = allData.filter(r => r.cpi_estimated !== 'True').map(r => r.year_month).sort();
+  if (!allData.length || !('cpi_estimated' in allData[0])) return null;   // no flag in the file: no claim
+  const covered = allData.filter(r => !isTrue(r.cpi_estimated)).map(r => r.year_month).sort();
   return covered.length ? covered[covered.length - 1] : null;
 }
 
@@ -236,7 +245,7 @@ function renderKpis() {
     (real ? `real${base ? ', ' + formatMonth(base) + ' dollars' : ''}` : 'nominal');
   // The averages run through the latest months even where CPI is not published yet (real = nominal
   // there); say so rather than let a real-dollar average quietly include un-deflated months.
-  const est = rows.filter(r => r.cpi_estimated === 'True').length;
+  const est = rows.filter(r => isTrue(r.cpi_estimated)).length;
   if (real && est) document.getElementById('kpi-sub').textContent += ` · the latest ${est} month${est === 1 ? '' : 's'} await CPI`;
 
   const rrpCol = getCol('rrp');
@@ -246,8 +255,12 @@ function renderKpis() {
     const label = `${period}-year average RRP`;
     if (rows.length < needed) return kpiTile('N/A', label, `only ${rows.length} months of data`);
     const recent = rows.slice(-needed);
-    const avgRrp = mean2(recent.map(r => parseFloat(r[rrpCol] || 0)));
-    const avgPeak = mean2(recent.map(r => parseFloat(r[peakCol] || 0)));
+    const avgRrp = mean2(recent.map(r => parseFloat(r[rrpCol])));
+    const avgPeak = mean2(recent.map(r => parseFloat(r[peakCol])));
+    if (avgRrp === null || avgPeak === null) {
+      const gaps = recent.filter(r => !isFinite(parseFloat(r[rrpCol])) || !isFinite(parseFloat(r[peakCol]))).length;
+      return kpiTile('N/A', label, `${gaps} month${gaps === 1 ? '' : 's'} in the window have no price`);
+    }
     return kpiTile(usd(avgRrp), label,
       `<span class="text-muted">Peak ${usd(avgPeak)}</span> · ${formatMonth(recent[0].year_month)} – ${formatMonth(last)}`);
   }).join('');
@@ -313,8 +326,8 @@ function renderTable(keepScroll) {
   };
   const rrpCell = cell(rrpCol), peakCell = cell(peakCol);
   tbody.innerHTML = rows.map(row => {
-    const carbon = row.carbon_flag === 'True';
-    const est = real && row.cpi_estimated === 'True';
+    const carbon = isTrue(row.carbon_flag);
+    const est = real && isTrue(row.cpi_estimated);
     const month = formatMonth(row.year_month);
     const label =
       (carbon ? '<span class="badge-dot mr-2 text-accent" aria-hidden="true"></span>' : '') + month +
@@ -349,7 +362,7 @@ function renderBasisNote(rows) {
   const el = document.getElementById('basis-note');
   if (priceMode !== 'real') { el.textContent = 'Nominal = prices as traded'; return; }
   const base = cpiBase();
-  const est = rows.filter(r => r.cpi_estimated === 'True').length;
+  const est = rows.filter(r => isTrue(r.cpi_estimated)).length;
   el.textContent = `Real = CPI-adjusted to ${base ? formatMonth(base) : 'the latest CPI quarter'} dollars` +
     (est ? ` · † the latest ${est} month${est === 1 ? '' : 's'} await CPI, so real = nominal` : '');
 }

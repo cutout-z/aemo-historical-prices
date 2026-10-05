@@ -70,6 +70,21 @@ def generate_all_states_workbook(summary: pd.DataFrame, output_dir: str):
     logger.info(f"Written {filepath.name}")
 
 
+def _real_dollars_note(data: pd.DataFrame) -> str | None:
+    """'Real prices are in <Mon YYYY> dollars ...' from the cpi_estimated flag, or None if absent."""
+    if "cpi_estimated" not in data.columns:
+        return None
+    flagged = data["cpi_estimated"].astype(bool)
+    covered = data.loc[~flagged, "year_month"]
+    if covered.empty:
+        return None
+    note = f"Real prices are in {_format_month(covered.max())} dollars (latest published CPI quarter)."
+    waiting = int(flagged.sum())
+    if waiting:
+        note += f" The latest {waiting} month(s) have no CPI yet, so real = nominal there (flagged in Monthly Data)."
+    return note
+
+
 def _format_month(year_month: str) -> str:
     """Convert '2003-07' to 'Jul 2003'."""
     dt = pd.Timestamp(year_month + "-01")
@@ -107,16 +122,24 @@ def _write_summary_sheet(wb: Workbook, data: pd.DataFrame, region_name: str):
         cell.alignment = Alignment(horizontal="center")
         cell.border = THIN_BORDER
 
-    # Calculate rolling averages
+    # Calculate rolling averages: means of the N*12 most recent MONTHLY values (each month weighted
+    # equally, not interval-weighted). A period longer than the region's history is an explicit
+    # "n/a" row; it is never silently dropped.
     row_idx = 5
     for period in config.ROLLING_PERIODS:
         months_needed = period * 12
+        ws.cell(row=row_idx, column=1, value=f"{period}-Year Average").border = THIN_BORDER
+
         if len(data) < months_needed:
+            for col_idx in range(2, 6):
+                cell = ws.cell(row=row_idx, column=col_idx, value="n/a")
+                cell.alignment = Alignment(horizontal="center")
+                cell.border = THIN_BORDER
+            ws.cell(row=row_idx, column=6, value=f"only {len(data)} months of data").font = Font(size=10, italic=True)
+            row_idx += 1
             continue
 
         recent = data.tail(months_needed)
-        ws.cell(row=row_idx, column=1, value=f"{period}-Year Average").border = THIN_BORDER
-
         for col_idx, col in enumerate(["rrp_nominal", "peak_rrp_nominal", "rrp_real", "peak_rrp_real"], 2):
             cell = ws.cell(row=row_idx, column=col_idx, value=round(recent[col].mean(), 2))
             cell.number_format = MONEY_FORMAT
@@ -130,6 +153,9 @@ def _write_summary_sheet(wb: Workbook, data: pd.DataFrame, region_name: str):
     ws.cell(row=row_idx + 1, column=1, value=f"Data through: {_format_month(latest['year_month'])}").font = Font(
         size=10, italic=True
     )
+    note = _real_dollars_note(data)
+    if note:
+        ws.cell(row=row_idx + 2, column=1, value=note).font = Font(size=10, italic=True)
 
     # Column widths
     ws.column_dimensions["A"].width = 20
@@ -143,7 +169,7 @@ def _write_data_sheet(wb: Workbook, data: pd.DataFrame, region_name: str, sheet_
 
     headers = [
         "Month", "RRP (Nominal)", "Peak RRP (Nominal)",
-        "RRP (Real)", "Peak RRP (Real)", "Carbon Tax"
+        "RRP (Real)", "Peak RRP (Real)", "Carbon Tax", "CPI Estimated"
     ]
     for col_idx, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=header)
@@ -166,12 +192,16 @@ def _write_data_sheet(wb: Workbook, data: pd.DataFrame, region_name: str, sheet_
         carbon_cell.alignment = Alignment(horizontal="center")
         carbon_cell.border = THIN_BORDER
 
+        est_cell = ws.cell(row=row_idx, column=7, value="Yes" if row.get("cpi_estimated") else "")
+        est_cell.alignment = Alignment(horizontal="center")
+        est_cell.border = THIN_BORDER
+
         if row.get("carbon_flag"):
-            for c in range(1, 7):
+            for c in range(1, 8):
                 ws.cell(row=row_idx, column=c).fill = CARBON_FILL
 
     ws.column_dimensions["A"].width = 14
-    for col_idx in range(2, 7):
+    for col_idx in range(2, 8):
         ws.column_dimensions[get_column_letter(col_idx)].width = 20
     ws.freeze_panes = "A2"
 

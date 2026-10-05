@@ -2,7 +2,6 @@
 
 import logging
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -87,36 +86,48 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return df
 
 
+def _months_back(year: int, month: int, n: int) -> tuple[int, int]:
+    """The calendar month n months before (year, month)."""
+    idx = year * 12 + (month - 1) - n
+    return idx // 12, idx % 12 + 1
+
+
 def get_latest_available_month() -> tuple[int, int] | None:
     """Probe AEMO to find the newest available month.
 
-    Checks NSW1 as the reference region, working backwards from current month.
+    Checks NSW1 as the reference region, working backwards by CALENDAR month from the current
+    NEM-time month. A 404 means "not published yet": try the month before. Any other failure
+    (network error, 5xx, redirect to an error page) is NOT a statement about the month, so it is
+    retried and then reported as an error -- never silently answered with an older month.
     Returns (year, month) or None if probing fails.
     """
-    now = datetime.now()
+    now = config.nem_now()
 
-    for months_back in range(0, 4):
-        probe_date = now - timedelta(days=30 * months_back)
-        year = probe_date.year
-        month = probe_date.month
+    for back in range(0, 4):
+        year, month = _months_back(now.year, now.month, back)
         url = _build_url(year, month, "NSW1")
 
+        status = None
         for attempt in range(config.MAX_RETRIES):
             try:
                 resp = requests.head(url, timeout=15, allow_redirects=True)
-                if resp.status_code == 200:
-                    logger.info(f"Latest available month: {year}-{month:02d}")
-                    return (year, month)
-                elif resp.status_code == 404:
-                    break  # This month doesn't exist yet, try earlier
-                else:
-                    logger.warning(f"Unexpected status {resp.status_code} for {url}")
+                status = resp.status_code
+                if status in (200, 404):
                     break
+                logger.warning(f"Unexpected status {status} for {url} (attempt {attempt + 1})")
             except requests.RequestException as e:
-                if attempt < config.MAX_RETRIES - 1:
-                    time.sleep(config.RETRY_BACKOFF * (attempt + 1))
-                else:
-                    logger.error(f"Failed to probe {url}: {e}")
+                status = None
+                logger.warning(f"Probe failed for {url} (attempt {attempt + 1}): {e}")
+            if attempt < config.MAX_RETRIES - 1:
+                time.sleep(config.RETRY_BACKOFF * (attempt + 1))
+
+        if status == 200:
+            logger.info(f"Latest available month: {year}-{month:02d}")
+            return (year, month)
+        if status != 404:
+            logger.error(f"Could not probe {url} (last status: {status}); not guessing an older month")
+            return None
+        # 404: this month is not published yet, try the one before
 
     logger.error("Could not determine latest available month from AEMO")
     return None

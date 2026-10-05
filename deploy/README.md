@@ -21,7 +21,7 @@ repo's `deploy/run-update.sh` (renamed from the retired VPS-era
 
 The lane registry, cadence windows and report paths live in
 `tools/nas-runner/configs/brain-ops.nas.toml` (the NAS runner tooling).
-`deploy/run-update.sh` runs the full test suite and commits/pushes only when
+`deploy/run-update.sh` runs the output validator (`tests/validate_outputs.py`: exact interval counts, contiguity, CPI and workbook checks) and commits/pushes only when
 `outputs/` changed, and the script self-heals a rewritten `main`: if
 `git pull --ff-only` is impossible it resets onto the fetched remote instead
 of exiting 128.

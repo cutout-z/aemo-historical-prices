@@ -32,25 +32,38 @@ def download_cpi(cache_path: str) -> pd.DataFrame:
 def _parse_cpi(path: Path) -> pd.DataFrame:
     """Parse the RBA G1 CSV file.
 
-    Structure: 11 metadata rows (including Series ID header), then data.
+    Structure: a block of metadata rows ending with the "Series ID" row, then data.
     Col A = dates as DD/MM/YYYY (quarter-end)
-    Col B = CPI All Groups index (base: Sep 2025 = 100)
+    Col B = CPI All Groups index (series GCPIAG; the rebase year does not matter to the ratio method)
     Later rows have more columns than early rows, so we only read cols 0-1.
+
+    The data start is found by locating the "Series ID" row, not by a fixed row count: a change in
+    RBA's metadata block must fail loudly rather than silently shift (or swallow) the first data row.
     """
+    lines = Path(path).read_text().splitlines()
+    header_idx = next(
+        (i for i, line in enumerate(lines) if line.split(",", 1)[0].strip().strip('"') == "Series ID"),
+        None,
+    )
+    if header_idx is None:
+        raise ValueError(f"RBA G1 file {Path(path).name}: no 'Series ID' row found; layout changed?")
+
     df = pd.read_csv(
         path,
-        skiprows=config.RBA_CPI_SKIP_ROWS,
+        skiprows=header_idx + 1,
         usecols=[0, 1],
         names=["date_str", "cpi_index"],
-        header=0,
+        header=None,
     )
 
     result = pd.DataFrame({
-        "date": pd.to_datetime(df["date_str"], dayfirst=True),
+        "date": pd.to_datetime(df["date_str"], dayfirst=True, errors="coerce"),
         "cpi_index": pd.to_numeric(df["cpi_index"], errors="coerce"),
     })
 
-    result = result.dropna(subset=["cpi_index"])
+    result = result.dropna(subset=["date", "cpi_index"])
+    if result.empty:
+        raise ValueError(f"RBA G1 file {Path(path).name}: no CPI rows after the 'Series ID' row")
     result = result.sort_values("date").reset_index(drop=True)
 
     logger.info(
@@ -64,7 +77,10 @@ def interpolate_monthly(quarterly_df: pd.DataFrame) -> pd.DataFrame:
     """Linearly interpolate quarterly CPI to monthly.
 
     Quarterly dates are quarter-ends (Mar 31, Jun 30, Sep 30, Dec 31).
-    We map each to the 1st of that month, then interpolate between them.
+    We map each to the 1st of that month, then interpolate between them. So the quarter's index is
+    anchored AT its last month (Oct is 1/3 of the way from the Sep to the Dec value). This is a
+    documented method choice: anchoring mid-quarter (Feb/May/Aug/Nov) would be the other standard
+    convention and moves real prices by about +0.2% on average (README, "CPI Methodology").
     Returns DataFrame with columns [date, cpi_index] at monthly frequency.
     """
     df = quarterly_df.copy()
