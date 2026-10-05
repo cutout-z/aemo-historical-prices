@@ -25,3 +25,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# the Tailwind standalone CLI — scripts/build-css.sh fetches it if absent (never commit the 48 MB binary)
+tools/
