@@ -33,28 +33,49 @@ Quarterly CPI values are linearly interpolated to monthly. Each quarterly value 
 
 All real prices are expressed in **dollars as at the most recent CPI quarter** available from the RBA (e.g. if the latest published quarter is Jun 2026, all prices are in "Jun 2026 dollars"). This base shifts forward automatically each time the script re-runs after a new CPI release. The dashboard and the workbooks both state the base month, and mark the months that have no CPI yet.
 
-### Known limitations of the CPI method, and their size
+### Known limitations of the CPI method
+
+**Terms.** *Nominal* is the price as traded in that month, straight from AEMO. CPI never touches it.
+*Real* is that price converted into one fixed set of dollars (the base month the dashboard states, e.g.
+"Jun 2026 dollars"): `real = nominal × base index / that month's index`. Only the real figures can be
+affected by anything below.
 
 The method uses one source (the RBA G1 table, which is exactly the ABS quarterly index) and a simple
-interpolation. Two things follow from that. Both were measured against the ABS's own monthly CPI
-(2026-10 analysis); neither is a bug, and the method was deliberately left as is.
+interpolation. That has three consequences. None is a bug, and the method was deliberately left as is.
 
-| Limitation | Size | Direction |
-|---|---|---|
-| **Quarter-end anchoring.** The ABS builds each quarterly index as the average of its three monthly indices, so the value belongs at the middle month, not the last. | Against the ABS monthly CPI (Apr 2024 – May 2026) the interpolated index is **0.27% low on average** (mean absolute error 0.33%, worst month −0.87%). Mid-quarter anchoring would cut the bias to about 0.01%. | Real prices are about **0.2% too high** on average (−0.7% to +0.7% by month) |
-| **Months with no CPI yet** (`cpi_estimated`) are left at real = nominal. The ABS monthly CPI is published sooner than the quarterly one (Aug 2026 is out while the latest quarter is Jun 2026). | At the time of writing the monthly index was 1.2% above the base by Aug 2026 (103.50 vs 102.31), so the flagged months are overstated by about 0.7% (Jul) to 1.2% (Aug); the latest month is not yet known. | Real prices of the flagged months are **0.7–1.2% too high** |
+1. **Quarter-end anchoring.** The ABS builds each quarterly index as the average of its three monthly
+   indices, so the value belongs at the *middle* month, not the last. With CPI rising, anchoring it at the
+   last month makes the interpolated index run slightly low, which makes the multiplier too big and the
+   real price slightly **too high**.
+2. **Months with no CPI yet** (`cpi_estimated`) are left at real = nominal, which assumes no inflation
+   since the base quarter. The ABS monthly CPI is published sooner than the quarterly one, so the true
+   index for those months is already above the base and their real prices are **too high** by about the
+   CPI growth since the base quarter (roughly 0.3% per month at 3–4% annual inflation).
+3. **The base lags "today".** Real prices are in the dollars of the latest *published* CPI quarter, not of
+   the present day. Measured against true present-day dollars every real figure is slightly **too low**,
+   by the CPI growth since the base quarter. This works against (2), and is separate from the two errors
+   above, which are measured against the stated base.
 
-**Combined effect.** Using the ABS monthly series from Apr 2024 and mid-quarter anchoring before it would
-move any month's real price by no more than 1.2% (mean −0.2%), and the headline averages by about
-0.4% (NSW 5-year real RRP $127.92 → $127.44; 1-year $75.16 → $74.84). Nominal prices are unaffected.
-For scale, the median month-on-month move in the underlying price is 17%.
+**Why it was left as is.** The effects are small next to the price movements the dashboard shows, and the
+alternative (ABS monthly CPI from Apr 2024, mid-quarter interpolation before it) adds a second data source
+with only about two years of monthly history, a splice to the older quarterly series, and an unconfirmed
+revision policy. Revisit it if the flagged-month window or the anchoring bias starts to matter.
 
-**Why it was left as is.** The effect is far smaller than the price movements the dashboard shows, and the
-alternative adds a second data source (the ABS Data API, dataflow `CPI` 2.0.0, key `1.10001.10.50.M`) with
-only 27 months of monthly history (from Apr 2024), a splice to the older quarterly series, and an
-unconfirmed revision policy. Revisit it if the flagged-month window or the 0.2% bias starts to matter.
-The monthly series does exist, and the quarterly index is, by the ABS's own description, the average of
-its three monthly values.
+#### Worked example: how big, measured on the Oct 2026 data
+
+*A snapshot. These figures were measured once against the ABS monthly CPI (Apr 2024 – Aug 2026) and the
+published outputs as at Oct 2026; they will drift with each CPI release and data update. To refresh them,
+compare the interpolated index with the ABS monthly series (ABS Data API, dataflow `CPI` 2.0.0, key
+`1.10001.10.50.M`, base Sep 2025 = 100).*
+
+| Item | Measured (Oct 2026 data) |
+|---|---|
+| Anchoring bias: interpolated index vs actual monthly CPI, Apr 2024 – May 2026 | **0.27% low** on average (mean absolute error 0.33%, worst month −0.87%); mid-quarter anchoring would cut the bias to about 0.01% |
+| Effect on real prices of the anchoring bias | about **0.2% too high** on average (−0.7% to +0.7% by month) |
+| Months with no CPI yet | Jul–Sep 2026; the ABS monthly index was 103.07 (Jul) and 103.50 (Aug) against a base of 102.31, so Jul is **0.7% too high** and Aug **1.2% too high**; Sep is not yet known |
+| Combined effect of switching to the ABS monthly series | any month's real price moves by at most 1.2% (mean −0.2%); headline averages by about 0.4% (NSW 5-year real RRP $127.92 → $127.44, 1-year $75.16 → $74.84); nominal prices unchanged |
+| One month, NSW Mar 2026 | traded at **$70.36** (nominal, exact). Interpolated index 101.70 vs actual 102.44, so the published real price is **$70.78** against **$70.27** with the actual index |
+| Scale | the median month-on-month move in the underlying price is 17% |
 
 ### Detailed calculation example
 
