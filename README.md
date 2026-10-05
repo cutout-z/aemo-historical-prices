@@ -29,7 +29,7 @@ Real prices are calculated using the CPI index ratio method:
 real_price = nominal_price × (CPI_latest / CPI_month)
 ```
 
-Quarterly CPI values are linearly interpolated to monthly. Each quarterly value is anchored at the **last month of its quarter** (Mar, Jun, Sep, Dec), so Oct is one third of the way from the Sep value to the Dec value. This is a method choice, not an ABS convention: anchoring mid-quarter (Feb, May, Aug, Nov) is the other common approach and would raise real prices by about 0.2% on average. For months beyond the latest published CPI quarter, no adjustment is applied (ratio = 1).
+Quarterly CPI values are linearly interpolated to monthly. Each quarterly value is anchored at the **last month of its quarter** (Mar, Jun, Sep, Dec), so Oct is one third of the way from the Sep value to the Dec value. This is a method choice: anchoring mid-quarter (Feb, May, Aug, Nov) is the other common approach, and the ABS builds each quarterly index as the average of its three monthly indices, which points to the middle month. Compared with the ABS's actual monthly CPI (available from Apr 2024), quarter-end anchoring runs about 0.3% low on the index; mid-quarter anchoring would lower real prices by about 0.2% on average (range −0.7% to +0.7%). For months beyond the latest published CPI quarter, no adjustment is applied (ratio = 1).
 
 All real prices are expressed in **dollars as at the most recent CPI quarter** available from the RBA (e.g. if the latest published quarter is Jun 2026, all prices are in "Jun 2026 dollars"). This base shifts forward automatically each time the script re-runs after a new CPI release. The dashboard and the workbooks both state the base month, and mark the months that have no CPI yet.
 

@@ -79,8 +79,10 @@ def interpolate_monthly(quarterly_df: pd.DataFrame) -> pd.DataFrame:
     Quarterly dates are quarter-ends (Mar 31, Jun 30, Sep 30, Dec 31).
     We map each to the 1st of that month, then interpolate between them. So the quarter's index is
     anchored AT its last month (Oct is 1/3 of the way from the Sep to the Dec value). This is a
-    documented method choice: anchoring mid-quarter (Feb/May/Aug/Nov) would be the other standard
-    convention and moves real prices by about +0.2% on average (README, "CPI Methodology").
+    documented method choice. The ABS quarterly index is the average of its three monthly indices, so
+    the other standard convention is to anchor mid-quarter (Feb/May/Aug/Nov); that raises the
+    interpolated index by about 0.2% on average and so LOWERS real prices by about 0.2%
+    (README, "CPI Methodology").
     Returns DataFrame with columns [date, cpi_index] at monthly frequency.
     """
     df = quarterly_df.copy()
