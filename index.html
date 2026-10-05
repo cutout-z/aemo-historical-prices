@@ -234,6 +234,10 @@ function renderKpis() {
   document.getElementById('kpi-sub').textContent =
     `Average monthly price over the latest 1, 3, 5 and 10 years to ${formatMonth(last)} · ` +
     (real ? `real${base ? ', ' + formatMonth(base) + ' dollars' : ''}` : 'nominal');
+  // The averages run through the latest months even where CPI is not published yet (real = nominal
+  // there); say so rather than let a real-dollar average quietly include un-deflated months.
+  const est = rows.filter(r => r.cpi_estimated === 'True').length;
+  if (real && est) document.getElementById('kpi-sub').textContent += ` · the latest ${est} month${est === 1 ? '' : 's'} await CPI`;
 
   const rrpCol = getCol('rrp');
   const peakCol = getCol('peak_rrp');
