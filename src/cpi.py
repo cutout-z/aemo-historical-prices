@@ -171,6 +171,11 @@ def adjust_prices(prices_df: pd.DataFrame, cpi_df: pd.DataFrame,
 
     For months beyond the latest CPI data, no adjustment is applied (ratio = 1).
     These months are flagged with cpi_estimated=True.
+
+    cpi_base is the 'YYYY-MM' of the newest CPI quarter, i.e. the month whose dollars the real prices
+    are in. It is written on every row so the page and workbooks name the base from the CPI series
+    itself, not from the cpi_estimated flags (which would name the wrong month if the AEMO data ever
+    lagged the CPI).
     """
     df = prices_df.copy()
 
@@ -191,6 +196,8 @@ def adjust_prices(prices_df: pd.DataFrame, cpi_df: pd.DataFrame,
     # Round to 2 decimal places
     df["rrp_real"] = df["rrp_real"].round(2)
     df["peak_rrp_real"] = df["peak_rrp_real"].round(2)
+
+    df["cpi_base"] = cpi_df["year_month"].max()
 
     # Clean up
     df = df.drop(columns=["cpi_index"])

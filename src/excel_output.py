@@ -71,14 +71,22 @@ def generate_all_states_workbook(summary: pd.DataFrame, output_dir: str):
 
 
 def _real_dollars_note(data: pd.DataFrame) -> str | None:
-    """'Real prices are in <Mon YYYY> dollars ...' from the cpi_estimated flag, or None if absent."""
+    """'Real prices are in <Mon YYYY> dollars ...', or None if the data carries no CPI columns.
+
+    The base is the cpi_base column (the newest CPI quarter) when present; older files without it
+    fall back to the last month not flagged cpi_estimated.
+    """
     if "cpi_estimated" not in data.columns:
         return None
     flagged = data["cpi_estimated"].astype(bool)
-    covered = data.loc[~flagged, "year_month"]
-    if covered.empty:
-        return None
-    note = f"Real prices are in {_format_month(covered.max())} dollars (latest published CPI quarter)."
+    if "cpi_base" in data.columns and data["cpi_base"].notna().any():
+        base = str(data["cpi_base"].dropna().max())
+    else:
+        covered = data.loc[~flagged, "year_month"]
+        if covered.empty:
+            return None
+        base = covered.max()
+    note = f"Real prices are in {_format_month(base)} dollars (latest published CPI quarter)."
     waiting = int(flagged.sum())
     if waiting:
         note += f" The latest {waiting} month(s) have no CPI yet, so real = nominal there (flagged in Monthly Data)."

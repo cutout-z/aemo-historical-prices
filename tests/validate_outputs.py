@@ -8,7 +8,8 @@ non-zero on any failure. The checks are exact wherever the right answer is deter
 * each region is contiguous from its configured start to a common end month, and that month is not
   older than config.latest_required_month() (a month that ended AEMO_MAX_MONTH_LAG_DAYS ago is due);
 * the CPI columns obey their own invariants (flag is a suffix, real == nominal when flagged, one
-  CPI ratio per month across regions and across the RRP / peak columns);
+  CPI ratio per month across regions and across the RRP / peak columns, cpi_base -- when present --
+  is one month and the flag covers exactly the months after it);
 * the carbon flag covers exactly Jul 2012 - Jun 2014;
 * every workbook agrees with summary.csv.
 """
@@ -148,6 +149,15 @@ def validate():
           and (flagged["peak_rrp_real"] == flagged["peak_rrp_nominal"]).all(),
           "a cpi_estimated month has real != nominal (it must carry ratio 1)")
     check(est.mean() < 0.05, f"{est.mean():.1%} of rows are cpi_estimated (CPI fetch may have failed)")
+    # cpi_base (newest CPI quarter, the real-dollar base) is optional so older files still validate.
+    if "cpi_base" in df.columns:
+        bases = df["cpi_base"].dropna().astype(str).unique()
+        if check(df["cpi_base"].notna().all() and len(bases) == 1,
+                 f"cpi_base must be one value on every row, got {list(bases)[:3]}"):
+            base = bases[0]
+            check(not df.loc[est, "year_month"].le(base).any()
+                  and not df.loc[~est, "year_month"].gt(base).any(),
+                  f"cpi_estimated must flag exactly the months after cpi_base {base}")
 
     ok = df[~est & (df["rrp_nominal"] >= 5)].copy()
     ok["ratio"] = ok["rrp_real"] / ok["rrp_nominal"]

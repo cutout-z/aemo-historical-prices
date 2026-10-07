@@ -278,6 +278,25 @@ def test_workbook_summary_has_explicit_na_rows_and_real_dollar_label():
         assert flags.count("Yes") == 3 and flags[-1] == "Yes" and flags[0] in (None, "")
 
 
+def test_adjust_prices_writes_the_cpi_quarter_as_the_base():
+    prices = pd.DataFrame({"region": "NSW1", "year_month": ["2026-05", "2026-06", "2026-07"],
+                           "rrp_nominal": 100.0, "peak_rrp_nominal": 120.0})
+    cpi_df = pd.DataFrame({"year_month": ["2026-04", "2026-05", "2026-06"], "cpi_index": [99.0, 99.5, 100.0]})
+    out = cpi.adjust_prices(prices, cpi_df, 100.0)
+    assert set(out["cpi_base"]) == {"2026-06"}
+    assert out["cpi_estimated"].tolist() == [False, False, True]
+
+
+def test_workbook_names_the_cpi_quarter_even_when_aemo_lags_the_cpi():
+    # AEMO data ends Sep 2026 with nothing flagged, but the CPI already has the Dec quarter: the
+    # flags alone would say "Sep 2026 dollars" while the figures are in Dec 2026 dollars.
+    df = _frame(24)
+    assert "Sep 2026 dollars" in excel_output._real_dollars_note(df)          # old files: from the flags
+    df["cpi_base"] = "2026-12"
+    note = excel_output._real_dollars_note(df)
+    assert "Dec 2026 dollars" in note and "no CPI yet" not in note, note
+
+
 # ----------------------------------------------------------------------------- run(): full refresh + partial month
 def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datetime(2026, 4, 20),
          fail_month=None, fail_mode="partial"):
