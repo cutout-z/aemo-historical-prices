@@ -224,6 +224,29 @@ def test_cpi_parse_tolerates_a_byte_order_mark():
     assert len(_parse("\ufeff" + G1)) == 3
 
 
+def _stale(quarter_end, now):
+    try:
+        cpi.check_cpi_fresh(pd.Timestamp(quarter_end), now)
+    except RuntimeError:
+        return True
+    return False
+
+
+def test_cpi_freshness_allows_the_normal_wait_for_a_quarter():
+    # Jun qtr is the newest until the Sep qtr lands ~28 Oct; the 1 Nov run may still see only Jun.
+    assert not _stale("2026-06-30", datetime(2026, 10, 7))
+    assert not _stale("2026-06-30", datetime(2026, 11, 1, 10, 38))
+    assert not _stale("2026-06-30", datetime(2026, 11, 30))      # a release a month late: still OK
+    # Dec qtr, released late Jan (4th Wednesday from Feb 2027), read on 1 May before the Mar qtr.
+    assert not _stale("2026-12-31", datetime(2027, 5, 1))
+
+
+def test_cpi_freshness_fails_when_g1_stops_updating():
+    assert _stale("2026-06-30", datetime(2026, 12, 1, 10, 38))   # Sep qtr more than a month late
+    assert _stale("2026-03-31", datetime(2026, 10, 7))           # a whole quarter missed
+    assert _stale("2025-06-30", datetime(2026, 10, 7))           # frozen for a year
+
+
 # ----------------------------------------------------------------------------- workbook
 def _frame(months, estimated_last=0):
     ym = [p.strftime("%Y-%m") for p in pd.period_range(end="2026-09", periods=months, freq="M")]

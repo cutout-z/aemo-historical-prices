@@ -127,6 +127,22 @@ def interpolate_monthly(quarterly_df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def check_cpi_fresh(latest_quarter_end: pd.Timestamp, now) -> None:
+    """Raise when the newest CPI quarter is more than config.CPI_MAX_AGE_DAYS old.
+
+    Months after the newest quarter are published with real = nominal and flagged cpi_estimated.
+    That is honest for a month or three, but if G1 stops updating (served but frozen) the run would
+    otherwise stay green while the flagged window grows. This fails the run instead.
+    """
+    age_days = (pd.Timestamp(now) - pd.Timestamp(latest_quarter_end)).days
+    if age_days > config.CPI_MAX_AGE_DAYS:
+        raise RuntimeError(
+            f"RBA G1 newest CPI quarter is {pd.Timestamp(latest_quarter_end):%d %b %Y}, {age_days} days "
+            f"ago (limit {config.CPI_MAX_AGE_DAYS}). ABS publishes about 4 weeks after quarter end: "
+            f"the G1 table has stopped updating, moved, or changed layout."
+        )
+
+
 def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float]:
     """Download CPI and prepare monthly lookup.
 
@@ -135,6 +151,7 @@ def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float]:
     """
     cache_path = str(Path(cache_dir) / "rba_g1_cpi.csv")
     quarterly = download_cpi(cache_path)
+    check_cpi_fresh(quarterly["date"].iloc[-1], config.nem_now())
     monthly = interpolate_monthly(quarterly)
 
     # Create year_month key for joining

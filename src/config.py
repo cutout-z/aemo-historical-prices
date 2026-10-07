@@ -56,6 +56,12 @@ RBA_CPI_URL = "https://www.rba.gov.au/statistics/tables/csv/g1-data.csv"
 # that column (a re-ordered table, a percent-change series, a switch to monthly) fails the run.
 RBA_CPI_SERIES_ID = "GCPIAG"
 RBA_CPI_FREQUENCY = "Quarterly"
+# The newest CPI quarter may be at most this many days old (quarter-end to NEM "now"), about 5
+# months. ABS publishes a quarter about 4 weeks after it ends and RBA G1 follows within a day or
+# two, so the oldest the newest quarter normally gets is about 4 months (e.g. 30 Jun until the Sep
+# quarter lands in late Oct). 153 days fails the first run after a release is about a month late,
+# instead of letting the "awaiting CPI" months pile up for a year.
+CPI_MAX_AGE_DAYS = 153
 
 # Paths (relative to project root)
 DATA_DIR = "data"
