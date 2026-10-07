@@ -43,7 +43,7 @@ ROLLING_PERIODS = [1, 2, 3, 5, 10, 15, 20]
 # AEMO aggregated price CSV URL pattern. Every file has a header row.
 # Before Oct 2021 the intervals are 30-minute trading periods; from Oct 2021 they are 5-minute.
 AEMO_URL_PATTERN = (
-    "https://aemo.com.au/aemo/data/nem/priceanddemand/"
+    "https://www.aemo.com.au/aemo/data/nem/priceanddemand/"
     "PRICE_AND_DEMAND_{ym}_{region}.csv"
 )
 

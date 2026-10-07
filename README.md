@@ -18,7 +18,7 @@ Automated analysis of NEM spot electricity prices across all five regions (NSW, 
 
 | Source | URL | Description |
 |--------|-----|-------------|
-| AEMO | `aemo.com.au/aemo/data/nem/priceanddemand/` | Aggregated 5-min/30-min spot prices |
+| AEMO | `www.aemo.com.au/aemo/data/nem/priceanddemand/` | Aggregated 5-min/30-min spot prices |
 | RBA | `rba.gov.au/statistics/tables/csv/g1-data.csv` | Quarterly CPI index (G1 table) |
 
 ## CPI Methodology
