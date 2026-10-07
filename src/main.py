@@ -147,6 +147,25 @@ def _assert_settled_history_unchanged(
     )
 
 
+def _assert_newest_month_processed(newest_ym: str, existing: set, new_results: list[dict]) -> None:
+    """Raise when the newest published month is missing in EVERY region.
+
+    Per-region failures inside the loop are logged and skipped so one bad file cannot block the rest
+    (a month missing in only some regions fails tests/validate_outputs.py's common-end check). But a
+    month that no region produced, and that summary.csv does not already hold, would otherwise be a
+    green run with no new data.
+    """
+    if any(ym == newest_ym for _, ym in existing):
+        return
+    if any(r["year_month"] == newest_ym for r in new_results):
+        return
+    raise RuntimeError(
+        f"AEMO lists {newest_ym} as published, but no region produced a complete month for it "
+        f"(download failed, 404 or incomplete in every region; see the log above). Failing the run "
+        f"rather than publishing without it."
+    )
+
+
 def run(full_refresh: bool = False, months_back: int = 1):
     """Main execution flow."""
     cache_dir = str(PROJECT_ROOT / config.DATA_DIR)
@@ -229,6 +248,11 @@ def run(full_refresh: bool = False, months_back: int = 1):
     if not new_results and summary is None:
         logger.error("No data was successfully processed.")
         sys.exit(1)
+
+    # The probe says AEMO has published the newest complete month. If no region produced it (every
+    # download failed, 404'd or was incomplete) and it is not already in summary.csv, fail the run:
+    # skipping it would exit 0 and leave the page a month behind until the next scheduled run.
+    _assert_newest_month_processed(f"{latest_year}-{latest_month:02d}", existing, new_results)
 
     # Step 5: Merge with existing summary
     if new_results:

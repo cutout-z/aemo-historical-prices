@@ -5,7 +5,8 @@ non-zero on any failure. The checks are exact wherever the right answer is deter
 
 * every month holds EXACTLY days x 48 (30-min, before Oct 2021) or days x 288 (5-min) intervals, and
   exactly weekdays x 30 / x 180 peak intervals -- no exemptions, including the latest month;
-* each region is contiguous from its configured start to a common end month;
+* each region is contiguous from its configured start to a common end month, and that month is not
+  older than config.latest_required_month() (a month that ended AEMO_MAX_MONTH_LAG_DAYS ago is due);
 * the CPI columns obey their own invariants (flag is a suffix, real == nominal when flagged, one
   CPI ratio per month across regions and across the RRP / peak columns);
 * the carbon flag covers exactly Jul 2012 - Jun 2014;
@@ -99,6 +100,10 @@ def validate():
     ends = df.groupby("region")["year_month"].max()
     check(ends.nunique() == 1, f"regions end on different months: {ends.to_dict()}")
     common_end = ends.max()
+    required = config.latest_required_month(config.nem_now())
+    check(common_end >= required,
+          f"newest month is {common_end}, but {required} ended at least {config.AEMO_MAX_MONTH_LAG_DAYS} "
+          f"days ago and is missing (AEMO not publishing, or every region's download failing?)")
     for region in REGIONS:
         have = sorted(df.loc[df["region"] == region, "year_month"])
         if not have:

@@ -73,6 +73,22 @@ def nem_now() -> datetime:
     return (datetime.now(timezone.utc) + NEM_UTC_OFFSET).replace(tzinfo=None)
 
 
+# Lower bound on the newest published month (tests/validate_outputs.py). A month that ENDED at least
+# this many days ago must be in summary.csv. AEMO's previous-month file has been complete by the 1st
+# (and lags of up to 28 days have been seen), so 35 days never trips on normal publication lag; it
+# catches a pipeline that keeps going green while no new month arrives.
+AEMO_MAX_MONTH_LAG_DAYS = 35
+
+
+def latest_required_month(now: datetime) -> str:
+    """'YYYY-MM' of the newest month that must be published at `now` (NEM time): the newest month
+    whose end (00:00 on the 1st of the next month) is at least AEMO_MAX_MONTH_LAG_DAYS ago."""
+    cutoff = now - timedelta(days=AEMO_MAX_MONTH_LAG_DAYS)
+    # Months ending on or before the cutoff are those before the cutoff's own month.
+    last_month_end = datetime(cutoff.year, cutoff.month, 1) - timedelta(days=1)
+    return last_month_end.strftime("%Y-%m")
+
+
 def expected_interval_count(year: int, month: int) -> int:
     """Exact number of price intervals in a complete month: days x 48 (30-min, before Oct 2021)
     or days x 288 (5-min, from Oct 2021). AEMO's file for a month runs from 00:30 (00:05) on the

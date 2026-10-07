@@ -231,8 +231,13 @@ def test_workbook_summary_has_explicit_na_rows_and_real_dollar_label():
 
 
 # ----------------------------------------------------------------------------- run(): full refresh + partial month
-def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datetime(2026, 4, 20)):
-    """Drive main.run() against fakes. Returns the summary written."""
+def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datetime(2026, 4, 20),
+         fail_month=None, fail_mode="partial"):
+    """Drive main.run() against fakes. Returns the summary written.
+
+    fail_month makes that month fail in EVERY region: "partial" (incomplete file), "404" (empty frame,
+    as download_month returns for a 404) or "error" (download_month raises).
+    """
     with tempfile.TemporaryDirectory() as d:
         saved = {}
         patches = {
@@ -248,6 +253,12 @@ def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datet
 
         def fake_download(year, month, region, cache_dir, force=False):
             calls.append((region, f"{year}-{month:02d}", force))
+            if fail_month == f"{year}-{month:02d}":
+                if fail_mode == "error":
+                    raise RuntimeError("Failed to download after 3 attempts")
+                if fail_mode == "404":
+                    return pd.DataFrame(columns=download.EXPECTED_COLUMNS)
+                return _month_frame(year, month, drop=500)
             if partial == (region, f"{year}-{month:02d}"):
                 return _month_frame(year, month, drop=500)
             return _month_frame(year, month)
@@ -289,6 +300,43 @@ def test_a_partial_month_is_not_published_and_the_rest_still_is():
     out = _run(True, MONTHS, calls, partial=("QLD1", "2026-03"))
     assert len(out) == 3 * len(config.REGIONS) - 1
     assert out[(out.region == "QLD1") & (out.year_month == "2026-03")].empty
+
+
+def test_newest_month_failing_in_every_region_fails_the_run():
+    # The old loop logged and skipped each failure, so a month no region produced was a green run.
+    for mode in ("partial", "404", "error"):
+        try:
+            _run(True, MONTHS, [], fail_month="2026-03", fail_mode=mode)
+        except RuntimeError as exc:
+            assert "2026-03" in str(exc), exc
+        else:
+            raise AssertionError(f"newest month failing everywhere ({mode}) must fail the run")
+
+
+def test_newest_month_already_published_survives_a_failed_redownload():
+    # 2026-03 is already in summary.csv; its mutable-window re-download failing keeps the old row.
+    calls = []
+    first = _run(True, MONTHS, calls)
+    out = _run(False, MONTHS, calls, summary_rows=first, fail_month="2026-03", fail_mode="error")
+    assert len(out) == 3 * len(config.REGIONS)
+
+
+def test_an_older_month_failing_everywhere_does_not_fail_the_run():
+    # Only the newest month is checked here; a gap further back fails the validator's contiguity check.
+    out = _run(True, MONTHS, [], fail_month="2026-02")
+    assert "2026-02" not in set(out.year_month)
+
+
+def test_latest_required_month_bound():
+    # Aug ends 00:00 1 Sep; with a 35-day tolerance it is due from 00:00 6 Oct.
+    assert config.AEMO_MAX_MONTH_LAG_DAYS == 35
+    assert config.latest_required_month(datetime(2026, 10, 5, 23, 59)) == "2026-07"
+    assert config.latest_required_month(datetime(2026, 10, 6, 0, 0)) == "2026-08"
+    # A run on the 1st never requires the month that just ended, nor the one before it.
+    assert config.latest_required_month(datetime(2026, 11, 1, 10, 38)) == "2026-08"
+    assert config.latest_required_month(datetime(2027, 1, 7)) == "2026-11"    # year boundary
+    # 28 days of AEMO lag (the most seen) stays inside the tolerance.
+    assert config.latest_required_month(datetime(2026, 10, 29)) < "2026-09"
 
 
 if __name__ == "__main__":
