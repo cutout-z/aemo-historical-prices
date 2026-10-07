@@ -142,6 +142,7 @@ Production updates run on the **NAS runner** — the QNAP `ai-wif-runner` contai
 
 - A QNAP scheduled task fires the lane daily; `deploy/run-update.sh` reprocesses the recent complete-month overlap window.
 - Older nominal price history is treated as settled; the pipeline aborts if a protected month changes or disappears. A region-month that was missing last time (a failed download) can be filled in without tripping the guard.
+- The run fails (non-zero exit, nothing committed) rather than going green without fresh data when: the newest month AEMO lists as published failed, 404'd or was incomplete in **every** region; the newest RBA G1 CPI quarter is more than `CPI_MAX_AGE_DAYS` (153, about 5 months) old; or G1 column B is no longer series `GCPIAG` with Quarterly frequency (`src/config.py`).
 - The lane commits as `aemo-nas-bot` and publishes only when canonical `outputs/summary.csv` changes, so daily workbook regeneration does not create noisy commits.
 - GitHub Pages deploys on those pushes.
 - GitHub Actions is kept as a manual verification/fallback runner.
@@ -186,6 +187,7 @@ After the pipeline runs and before committing, an automated validation step (`te
 
 - `summary.csv` has every required column, no duplicate region/month rows, and finite prices (none below the −$1,000/MWh market floor)
 - All 5 NEM regions are present, each contiguous from its start month (Tasmania: Jun 2005) to one common end month
+- That end month is recent: any month that ended at least `AEMO_MAX_MONTH_LAG_DAYS` (35) days ago must be present (`src/config.py`)
 - **Every** month, including the latest, holds exactly days × 48 (before Oct 2021) or days × 288 intervals, and exactly weekdays × 30 or × 180 peak intervals
 - `carbon_flag` covers exactly Jul 2012 – Jun 2014
 - CPI columns are consistent: `cpi_estimated` is only ever the most recent months, those months have real = nominal, the CPI ratio is the same across regions and across the RRP and peak columns, and (when present) `cpi_base` is one month with `cpi_estimated` flagging exactly the months after it
