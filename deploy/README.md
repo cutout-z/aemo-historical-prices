@@ -21,8 +21,14 @@ repo's `deploy/run-update.sh` (renamed from the retired VPS-era
 
 The lane registry, cadence windows and report paths live in
 `tools/nas-runner/configs/brain-ops.nas.toml` (the NAS runner tooling).
-`deploy/run-update.sh` runs the output validator (`tests/validate_outputs.py`: exact interval counts, contiguity, CPI and workbook checks) and commits/pushes only when
-`outputs/` changed, and the script self-heals a rewritten `main`: if
+`deploy/run-update.sh` runs the output validator (`tests/validate_outputs.py`: exact interval counts, contiguity, CPI, workbook and status.json checks), then commits and pushes:
+
+- when `outputs/summary.csv` changed, all of `outputs/` as "Update historical price analysis YYYY-MM";
+- otherwise only `outputs/status.json` (the run's last-checked stamp), as "Status check YYYY-MM-DD
+  (no data change)"; the regenerated workbooks are discarded. With the lane running daily that is one
+  small commit per day, and each one redeploys Pages so the footer's "last checked" date moves.
+
+The script self-heals a rewritten `main`: if
 `git pull --ff-only` is impossible it resets onto the fetched remote instead
 of exiting 128.
 

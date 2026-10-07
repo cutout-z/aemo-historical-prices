@@ -3,9 +3,11 @@
 Runs under pytest or directly:  python tests/test_pipeline_logic.py
 """
 
+import importlib.util
+import json
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -224,6 +226,20 @@ def test_cpi_parse_tolerates_a_byte_order_mark():
     assert len(_parse("\ufeff" + G1)) == 3
 
 
+def test_g1_edition_publication_date_and_last_modified():
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "g1.csv"
+        p.write_text("\ufeff" + G1)
+        assert cpi.g1_publication_date(p) == "2026-07-30"
+        p.write_text(G1.replace("Publication date,30-Jul-2026,30-Jul-2026\n", ""))
+        assert cpi.g1_publication_date(p) is None            # informational: absent is not an error
+        p.write_text(G1.replace("30-Jul-2026,30", "July 2026,30"))
+        assert cpi.g1_publication_date(p) is None
+    assert cpi._http_date_to_iso("Thu, 30 Jul 2026 01:16:42 GMT") == "2026-07-30T01:16:42Z"
+    assert cpi._http_date_to_iso(None) is None
+    assert cpi._http_date_to_iso("not a date") is None
+
+
 def _stale(quarter_end, now):
     try:
         cpi.check_cpi_fresh(pd.Timestamp(quarter_end), now)
@@ -298,21 +314,28 @@ def test_workbook_names_the_cpi_quarter_even_when_aemo_lags_the_cpi():
 
 
 # ----------------------------------------------------------------------------- run(): full refresh + partial month
+EDITION = {"latest_quarter": "2026-03", "g1_publication_date": "2026-04-29",
+           "g1_last_modified_utc": "2026-04-29T01:30:00Z"}
+
+
 def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datetime(2026, 4, 20),
-         fail_month=None, fail_mode="partial"):
-    """Drive main.run() against fakes. Returns the summary written.
+         fail_month=None, fail_mode="partial", status_out=None, root=None):
+    """Drive main.run() against fakes. Returns the summary written (and fills status_out, if given,
+    with the status.json written).
 
     fail_month makes that month fail in EVERY region: "partial" (incomplete file), "404" (empty frame,
     as download_month returns for a 404) or "error" (download_month raises).
     """
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory() as tmp:
+        d = root or tmp
         saved = {}
         patches = {
             (main, "PROJECT_ROOT"): Path(d),
             (main, "get_latest_available_month"): lambda: months[-1],
             (main, "generate_all_workbooks"): lambda *a, **k: None,
             (main, "get_cpi_lookup"): lambda cache: (
-                pd.DataFrame({"year_month": [f"{y}-{m:02d}" for y, m in months], "cpi_index": 100.0}), 100.0),
+                pd.DataFrame({"year_month": [f"{y}-{m:02d}" for y, m in months], "cpi_index": 100.0}), 100.0,
+                EDITION),
             (config, "START_DATE"): datetime(*months[0], 1),
             (config, "REGION_START_DATES"): {r: datetime(*months[0], 1) for r in config.REGIONS},
             (config, "nem_now"): lambda: now,
@@ -336,9 +359,11 @@ def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datet
             setattr(obj, name, val)
         try:
             if summary_rows is not None:
-                (Path(d) / "outputs").mkdir()
+                (Path(d) / "outputs").mkdir(exist_ok=True)
                 summary_rows.to_csv(Path(d) / "outputs" / "summary.csv", index=False)
             main.run(full_refresh=full_refresh, months_back=1)
+            if status_out is not None:
+                status_out.update(json.loads((Path(d) / "outputs" / "status.json").read_text()))
             return pd.read_csv(Path(d) / "outputs" / "summary.csv")
         finally:
             for (obj, name), val in saved.items():
@@ -392,6 +417,108 @@ def test_an_older_month_failing_everywhere_does_not_fail_the_run():
     # Only the newest month is checked here; a gap further back fails the validator's contiguity check.
     out = _run(True, MONTHS, [], fail_month="2026-02")
     assert "2026-02" not in set(out.year_month)
+
+
+# ----------------------------------------------------------------------------- status.json
+def test_run_writes_status_json_with_the_check_time_and_editions():
+    status = {}
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+    out = _run(True, MONTHS, [], status_out=status)
+    checked = datetime.strptime(status["last_checked_utc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert before <= checked <= datetime.now(timezone.utc)
+    assert datetime.fromisoformat(status["last_checked_awst"]) == checked
+    assert status["last_checked_awst"].endswith("+08:00")
+    assert status["aemo_latest_month"] == out.year_month.max() == "2026-03"
+    assert status["cpi_latest_quarter"] == "2026-03"
+    assert status["cpi_g1_publication_date"] == "2026-04-29"
+    assert status["cpi_g1_last_modified_utc"] == "2026-04-29T01:30:00Z"
+    assert status["sources"]["aemo"] == {"status": "ok", "files_processed": 3 * len(config.REGIONS),
+                                         "kept_previous": []}
+    assert status["sources"]["rba_g1_cpi"] == {"status": "ok"}
+
+
+def test_status_says_cached_when_a_recheck_failed_and_the_old_row_was_kept():
+    first = _run(True, MONTHS, [])
+    status = {}
+    _run(False, MONTHS, [], summary_rows=first, fail_month="2026-03", fail_mode="error", status_out=status)
+    aemo = status["sources"]["aemo"]
+    assert aemo["status"] == "cached"
+    assert aemo["kept_previous"] == sorted(f"{r} 2026-03" for r in config.REGIONS)
+    assert status["aemo_latest_month"] == "2026-03"
+
+
+def test_no_status_is_written_when_the_run_fails():
+    with tempfile.TemporaryDirectory() as d:
+        first = _run(True, MONTHS, [], root=d)
+        status = Path(d) / "outputs" / "status.json"
+        assert status.exists()
+        status.unlink()
+        try:
+            _run(False, MONTHS + [(2026, 4)], [], summary_rows=first, fail_month="2026-04", root=d,
+                 now=datetime(2026, 5, 20))
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("the run should have failed")
+        assert not status.exists(), "a failed run must not record a successful check"
+
+
+def _validator():
+    spec = importlib.util.spec_from_file_location(
+        "validate_outputs", Path(__file__).resolve().parent / "validate_outputs.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _status_errors(status, df, now=datetime(2026, 10, 7, 1, 0, tzinfo=timezone.utc), raw=None):
+    v = _validator()
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "status.json"
+        if raw is not None:
+            path.write_text(raw)
+        elif status is not None:
+            path.write_text(json.dumps(status))
+        v.validate_status(df, path, now)
+    return v.errors
+
+
+def _good_status():
+    df = _frame(24)
+    df["region"] = "NSW1"
+    df["cpi_base"] = "2026-06"
+    st = main.build_status(df, {"latest_quarter": "2026-06", "g1_publication_date": "2026-07-30",
+                                "g1_last_modified_utc": None}, 10, [],
+                           datetime(2026, 10, 7, 0, 38, 12, tzinfo=timezone.utc))
+    return st, df
+
+
+def test_validator_accepts_a_status_written_by_this_run():
+    st, df = _good_status()
+    assert st["last_checked_awst"] == "2026-10-07T08:38:12+08:00"
+    assert _status_errors(st, df) == []
+
+
+def test_validator_rejects_a_missing_stale_or_inconsistent_status():
+    st, df = _good_status()
+    assert any("does not exist" in e for e in _status_errors(None, df))
+    assert any("not valid JSON" in e for e in _status_errors(None, df, raw="{"))
+    # left over from yesterday's run: this run did not write it
+    assert any("this run did not write" in e
+               for e in _status_errors(st, df, now=datetime(2026, 10, 8, 0, 40, tzinfo=timezone.utc)))
+    assert any("in the future" in e
+               for e in _status_errors(st, df, now=datetime(2026, 10, 6, 23, 0, tzinfo=timezone.utc)))
+    assert any("aemo_latest_month" in e for e in _status_errors({**st, "aemo_latest_month": "2026-08"}, df))
+    assert any("cpi_base" in e for e in _status_errors({**st, "cpi_latest_quarter": "2026-03"}, df))
+    assert any("quarter-end" in e for e in _status_errors({**st, "cpi_latest_quarter": "2026-07"}, df))
+    assert any("AWST" in e for e in _status_errors({**st, "last_checked_awst": "2026-10-07T00:38:12+00:00"}, df))
+    bad = json.loads(json.dumps(st))
+    bad["sources"]["aemo"]["status"] = "cached"                      # cached but nothing listed
+    assert any("kept_previous" in e for e in _status_errors(bad, df))
+    bad["sources"]["aemo"]["kept_previous"] = ["QLD1 2026-09"]       # a row summary.csv does not have
+    assert any("not in summary.csv" in e for e in _status_errors(bad, df))
+    bad["sources"]["aemo"]["kept_previous"] = ["NSW1 2026-09"]
+    assert _status_errors(bad, df) == []
 
 
 def test_latest_required_month_bound():

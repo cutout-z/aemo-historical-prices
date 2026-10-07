@@ -132,8 +132,8 @@ python -m src.main
 # row. It bypasses the settled-history guard on purpose, for deliberate audited rewrites.
 python -m src.main --full-refresh
 
-# Tests (no network): peak-window boundaries and pipeline logic
-python tests/test_peak_window.py && python tests/test_pipeline_logic.py
+# Tests (no network): peak-window boundaries, pipeline logic, and the lane wrapper's commit rules
+python tests/test_peak_window.py && python tests/test_pipeline_logic.py && python tests/test_run_update.py
 ```
 
 ## Automation
@@ -143,7 +143,8 @@ Production updates run on the **NAS runner** — the QNAP `ai-wif-runner` contai
 - A QNAP scheduled task fires the lane daily; `deploy/run-update.sh` reprocesses the recent complete-month overlap window.
 - Older nominal price history is treated as settled; the pipeline aborts if a protected month changes or disappears. A region-month that was missing last time (a failed download) can be filled in without tripping the guard.
 - The run fails (non-zero exit, nothing committed) rather than going green without fresh data when: the newest month AEMO lists as published failed, 404'd or was incomplete in **every** region; the newest RBA G1 CPI quarter is more than `CPI_MAX_AGE_DAYS` (153, about 5 months) old; or G1 column B is no longer series `GCPIAG` with Quarterly frequency (`src/config.py`).
-- The lane commits as `aemo-nas-bot` and publishes only when canonical `outputs/summary.csv` changes, so daily workbook regeneration does not create noisy commits.
+- The lane commits as `aemo-nas-bot`. When canonical `outputs/summary.csv` changes it commits all of `outputs/` ("Update historical price analysis YYYY-MM"). When it does not, it discards the regenerated workbooks and commits only `outputs/status.json` ("Status check YYYY-MM-DD (no data change)"), so the page's "last checked" date moves every run without workbook noise.
+- `outputs/status.json` is written by every successful run: `last_checked_utc` / `last_checked_awst`, `aemo_latest_month`, the CPI edition (`cpi_latest_quarter`, the RBA G1 `cpi_g1_publication_date` and its HTTP `cpi_g1_last_modified_utc`), and per-source status (`aemo`: `ok`, or `cached` with `kept_previous` listing the region-months whose re-check failed and whose last good row was kept; `rba_g1_cpi`: always `ok`, since a failed CPI fetch fails the run). The page footer shows "Data to <month> · CPI <quarter> · last checked <date>" from it, and leaves the date out if the file is missing.
 - GitHub Pages deploys on those pushes.
 - GitHub Actions is kept as a manual verification/fallback runner.
 
@@ -162,9 +163,11 @@ src/
 tests/
 ├── validate_outputs.py       # Output gate run by the lane before every commit
 ├── test_peak_window.py       # Peak-window boundary tests
-└── test_pipeline_logic.py    # Guard, completeness, probe, CPI parsing, workbook tests
+├── test_pipeline_logic.py    # Guard, completeness, probe, CPI parsing, workbook, status.json tests
+└── test_run_update.py        # deploy/run-update.sh commit rules (status-only vs data commits)
 outputs/
 ├── summary.csv      # Master dataset (all regions, all months)
+├── status.json      # Last successful run: when it checked, newest month, CPI edition, per-source status
 ├── {NSW,QLD,VIC,SA,TAS}_historical_prices.xlsx   # Per-region workbooks
 └── All_States_historical_prices.xlsx             # One monthly sheet per region
 deploy/              # NAS lane runner script (run-update.sh) and env
@@ -192,6 +195,7 @@ After the pipeline runs and before committing, an automated validation step (`te
 - `carbon_flag` covers exactly Jul 2012 – Jun 2014
 - CPI columns are consistent: `cpi_estimated` is only ever the most recent months, those months have real = nominal, the CPI ratio is the same across regions and across the RRP and peak columns, and (when present) `cpi_base` is one month with `cpi_estimated` flagging exactly the months after it
 - All 6 workbooks exist, have the expected sheets, and agree with `summary.csv`
+- `status.json` exists, was written by this run (`last_checked_utc` within `STATUS_MAX_AGE_HOURS`, 12, and not in the future; `last_checked_awst` is the same instant), and agrees with `summary.csv`: `aemo_latest_month` is the newest month, `cpi_latest_quarter` is a quarter-end month equal to `cpi_base`, and the per-source statuses are consistent
 
 If any check fails, the NAS lane or manual fallback workflow exits before committing — preventing bad data from reaching the dashboard.
 
