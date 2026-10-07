@@ -52,6 +52,10 @@ FORMAT_CHANGE_DATE = datetime(2021, 10, 1)
 
 # RBA CPI data
 RBA_CPI_URL = "https://www.rba.gov.au/statistics/tables/csv/g1-data.csv"
+# The deflator is G1 column B, which must be the quarterly All groups CPI index. Anything else in
+# that column (a re-ordered table, a percent-change series, a switch to monthly) fails the run.
+RBA_CPI_SERIES_ID = "GCPIAG"
+RBA_CPI_FREQUENCY = "Quarterly"
 
 # Paths (relative to project root)
 DATA_DIR = "data"

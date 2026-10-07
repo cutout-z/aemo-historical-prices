@@ -163,6 +163,8 @@ def test_probe_year_boundary():
 G1 = """G1 CONSUMER PRICE INFLATION
 Title,Consumer price index,Year-ended inflation
 Description,Consumer price index; All groups,Year-ended
+Frequency,Quarterly,Quarterly
+Type,Original,Original
 Units,"Index, September 2025 month = 100",Per cent
 
 Source,ABS / RBA,ABS / RBA
@@ -197,6 +199,29 @@ def test_cpi_parse_survives_extra_metadata_rows_and_fails_loudly_without_series_
         assert "Series ID" in str(exc)
     else:
         raise AssertionError("a layout change must fail loudly")
+
+
+def _parse_fails(text, needle):
+    try:
+        _parse(text)
+    except ValueError as exc:
+        assert needle in str(exc), exc
+    else:
+        raise AssertionError(f"expected a ValueError mentioning {needle!r}")
+
+
+def test_cpi_parse_requires_gcpiag_in_column_b():
+    # A reordered table would put a percent-change series in column B and deflate every region by it.
+    _parse_fails(G1.replace("Series ID,GCPIAG,GCPIAGYP", "Series ID,GCPIAGYP,GCPIAG"), "GCPIAG")
+
+
+def test_cpi_parse_requires_quarterly_frequency():
+    _parse_fails(G1.replace("Frequency,Quarterly,", "Frequency,Monthly,"), "Quarterly")
+    _parse_fails(G1.replace("Frequency,Quarterly,Quarterly\n", ""), "Quarterly")       # row missing
+
+
+def test_cpi_parse_tolerates_a_byte_order_mark():
+    assert len(_parse("\ufeff" + G1)) == 3
 
 
 # ----------------------------------------------------------------------------- workbook
