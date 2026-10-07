@@ -67,6 +67,9 @@ CPI_MAX_AGE_DAYS = 153
 DATA_DIR = "data"
 OUTPUT_DIR = "outputs"
 SUMMARY_CSV = "outputs/summary.csv"
+# Written by every successful run, even when summary.csv is unchanged, so the page can show when the
+# sources were last checked (not just the newest data month). deploy/run-update.sh commits it daily.
+STATUS_JSON = "outputs/status.json"
 
 # Network retry settings
 MAX_RETRIES = 3
@@ -81,6 +84,15 @@ NEM_UTC_OFFSET = timedelta(hours=10)
 def nem_now() -> datetime:
     """Current wall-clock time in NEM time (naive datetime)."""
     return (datetime.now(timezone.utc) + NEM_UTC_OFFSET).replace(tzinfo=None)
+
+
+# The "last checked" stamp in outputs/status.json is given in UTC and in AWST (Perth, UTC+8, no
+# daylight saving); the page shows the AWST date.
+AWST = timezone(timedelta(hours=8), "AWST")
+
+# tests/validate_outputs.py runs straight after the pipeline, so outputs/status.json must have been
+# written by that run: a last-checked stamp older than this means the pipeline did not write it.
+STATUS_MAX_AGE_HOURS = 12
 
 
 # Lower bound on the newest published month (tests/validate_outputs.py). A month that ENDED at least

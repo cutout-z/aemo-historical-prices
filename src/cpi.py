@@ -2,6 +2,8 @@
 
 import csv
 import logging
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import pandas as pd
@@ -12,10 +14,10 @@ from . import config
 logger = logging.getLogger(__name__)
 
 
-def download_cpi(cache_path: str) -> pd.DataFrame:
-    """Fetch RBA G1 CSV and return quarterly CPI index series.
+def download_cpi(cache_path: str) -> tuple[pd.DataFrame, str | None]:
+    """Fetch RBA G1 CSV and return (quarterly CPI index series, Last-Modified as ISO UTC or None).
 
-    Returns DataFrame with columns [date, cpi_index] where date is quarter-end.
+    The DataFrame has columns [date, cpi_index] where date is quarter-end.
     """
     cache = Path(cache_path)
 
@@ -27,7 +29,39 @@ def download_cpi(cache_path: str) -> pd.DataFrame:
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(resp.text)
 
-    return _parse_cpi(cache)
+    return _parse_cpi(cache), _http_date_to_iso(resp.headers.get("Last-Modified"))
+
+
+def _http_date_to_iso(value: str | None) -> str | None:
+    """'Thu, 30 Jul 2026 01:16:42 GMT' -> '2026-07-30T01:16:42Z'; None when absent or unparseable."""
+    if not value:
+        return None
+    try:
+        dt = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def g1_publication_date(path) -> str | None:
+    """The G1 "Publication date" for column B (GCPIAG) as 'YYYY-MM-DD', or None if absent.
+
+    Informational only (it is shown as the CPI edition in outputs/status.json): the layout checks that
+    can fail the run live in _parse_cpi.
+    """
+    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+        fields = next(csv.reader([line]), [])
+        if fields and fields[0].strip() == "Publication date":
+            raw = fields[1].strip() if len(fields) > 1 else ""
+            try:
+                return datetime.strptime(raw, "%d-%b-%Y").strftime("%Y-%m-%d")
+            except ValueError:
+                logger.warning(f"RBA G1 publication date {raw!r} is not DD-Mon-YYYY; not recorded")
+                return None
+    logger.warning("RBA G1 file has no 'Publication date' row; not recorded")
+    return None
 
 
 def _parse_cpi(path: Path) -> pd.DataFrame:
@@ -143,14 +177,17 @@ def check_cpi_fresh(latest_quarter_end: pd.Timestamp, now) -> None:
         )
 
 
-def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float]:
+def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float, dict]:
     """Download CPI and prepare monthly lookup.
 
-    Returns (monthly_cpi_df, latest_cpi_value).
+    Returns (monthly_cpi_df, latest_cpi_value, edition).
     monthly_cpi_df has columns [year_month, cpi_index] where year_month is 'YYYY-MM'.
+    edition describes the G1 file this run used (for outputs/status.json): latest_quarter ('YYYY-MM' of
+    the newest quarter-end), g1_publication_date ('YYYY-MM-DD' or None) and g1_last_modified_utc (the
+    HTTP Last-Modified header as ISO UTC, or None).
     """
     cache_path = str(Path(cache_dir) / "rba_g1_cpi.csv")
-    quarterly = download_cpi(cache_path)
+    quarterly, last_modified = download_cpi(cache_path)
     check_cpi_fresh(quarterly["date"].iloc[-1], config.nem_now())
     monthly = interpolate_monthly(quarterly)
 
@@ -160,7 +197,12 @@ def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float]:
     latest_cpi = monthly["cpi_index"].iloc[-1]
     logger.info(f"Latest CPI index: {latest_cpi:.2f}")
 
-    return monthly[["year_month", "cpi_index"]], latest_cpi
+    edition = {
+        "latest_quarter": f"{quarterly['date'].iloc[-1]:%Y-%m}",
+        "g1_publication_date": g1_publication_date(cache_path),
+        "g1_last_modified_utc": last_modified,
+    }
+    return monthly[["year_month", "cpi_index"]], latest_cpi, edition
 
 
 def adjust_prices(prices_df: pd.DataFrame, cpi_df: pd.DataFrame,

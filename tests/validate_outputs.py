@@ -11,11 +11,16 @@ non-zero on any failure. The checks are exact wherever the right answer is deter
   CPI ratio per month across regions and across the RRP / peak columns, cpi_base -- when present --
   is one month and the flag covers exactly the months after it);
 * the carbon flag covers exactly Jul 2012 - Jun 2014;
-* every workbook agrees with summary.csv.
+* every workbook agrees with summary.csv;
+* status.json exists, was written by this run (last checked within config.STATUS_MAX_AGE_HOURS) and
+  agrees with summary.csv (newest month, CPI base quarter).
 """
 
 import calendar
+import json
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -59,6 +64,66 @@ def _expected_peak(year_month: str) -> int:
 
 def _month_range(first: str, last: str) -> list[str]:
     return [p.strftime("%Y-%m") for p in pd.period_range(first, last, freq="M")]
+
+
+def _parse_utc(value) -> datetime | None:
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def validate_status(df: pd.DataFrame, status_path: Path, now_utc: datetime) -> None:
+    """outputs/status.json: present, written by this run, and consistent with summary.csv."""
+    if not check(status_path.exists(), f"{status_path.name} does not exist (the pipeline writes it on every run)"):
+        return
+    try:
+        st = json.loads(status_path.read_text())
+    except ValueError as exc:
+        check(False, f"{status_path.name} is not valid JSON: {exc}")
+        return
+    if not check(isinstance(st, dict), f"{status_path.name} is not a JSON object"):
+        return
+
+    checked = _parse_utc(st.get("last_checked_utc"))
+    if check(checked is not None, f"status last_checked_utc {st.get('last_checked_utc')!r} is not YYYY-MM-DDTHH:MM:SSZ"):
+        age = now_utc - checked
+        check(age >= timedelta(minutes=-5), f"status last_checked_utc {st['last_checked_utc']} is in the future")
+        check(age <= timedelta(hours=config.STATUS_MAX_AGE_HOURS),
+              f"status last_checked_utc {st['last_checked_utc']} is {age.total_seconds() / 3600:.0f} h old "
+              f"(limit {config.STATUS_MAX_AGE_HOURS} h): this run did not write status.json")
+        awst = st.get("last_checked_awst")
+        try:
+            same = datetime.fromisoformat(str(awst)) == checked and str(awst).endswith("+08:00")
+        except ValueError:
+            same = False
+        check(same, f"status last_checked_awst {awst!r} is not last_checked_utc in AWST (+08:00)")
+
+    common_end = df["year_month"].max()
+    check(st.get("aemo_latest_month") == common_end,
+          f"status aemo_latest_month {st.get('aemo_latest_month')!r} != summary.csv newest month {common_end}")
+
+    quarter = st.get("cpi_latest_quarter")
+    check(isinstance(quarter, str) and re.fullmatch(r"\d{4}-(03|06|09|12)", quarter) is not None,
+          f"status cpi_latest_quarter {quarter!r} is not a quarter-end month YYYY-MM")
+    if "cpi_base" in df.columns and df["cpi_base"].notna().all():
+        bases = set(df["cpi_base"].astype(str))
+        check(bases == {quarter}, f"status cpi_latest_quarter {quarter!r} != summary.csv cpi_base {sorted(bases)}")
+    pub = st.get("cpi_g1_publication_date")
+    check(pub is None or (isinstance(pub, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", pub) is not None),
+          f"status cpi_g1_publication_date {pub!r} is not YYYY-MM-DD")
+
+    sources = st.get("sources") if isinstance(st.get("sources"), dict) else {}
+    aemo = sources.get("aemo") if isinstance(sources.get("aemo"), dict) else {}
+    cpi = sources.get("rba_g1_cpi") if isinstance(sources.get("rba_g1_cpi"), dict) else {}
+    check(aemo.get("status") in ("ok", "cached"), f"status sources.aemo.status is {aemo.get('status')!r}")
+    check(cpi.get("status") == "ok", f"status sources.rba_g1_cpi.status is {cpi.get('status')!r} (G1 is fetched every run)")
+    kept = aemo.get("kept_previous", [])
+    check((aemo.get("status") == "cached") == bool(kept),
+          f"status sources.aemo is {aemo.get('status')!r} but kept_previous lists {len(kept)} file(s)")
+    have = set(df["region"] + " " + df["year_month"])
+    missing = [k for k in kept if k not in have]
+    check(not missing, f"status kept_previous names rows that are not in summary.csv: {missing[:3]}")
 
 
 def validate():
@@ -201,6 +266,9 @@ def validate():
                 want_n = int((df["region"] == region_id).sum())
                 check(n == want_n, f"All_States {name}: {n} rows vs {want_n} in summary.csv")
         wb.close()
+
+    # --- status.json: the run record behind the page's "last checked" ---
+    validate_status(df, OUTPUTS_DIR / "status.json", datetime.now(timezone.utc))
 
 
 if __name__ == "__main__":

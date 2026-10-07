@@ -1,9 +1,10 @@
 """CLI orchestrator for AEMO historical price analysis."""
 
 import argparse
+import json
 import logging
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -166,6 +167,43 @@ def _assert_newest_month_processed(newest_ym: str, existing: set, new_results: l
     )
 
 
+def build_status(summary: pd.DataFrame, cpi_edition: dict, files_processed: int,
+                 not_refreshed: list[str], now_utc: datetime) -> dict:
+    """The run record published as outputs/status.json.
+
+    last_checked is when this run finished checking the sources (UTC, and AWST for the page). Sources:
+      aemo        "ok" when every AEMO file this run re-checked was processed; "cached" when some could
+                  not be refreshed (download failed, 404 or incomplete) and the previously published
+                  row was kept -- kept_previous lists them as "REGION YYYY-MM".
+      rba_g1_cpi  always "ok": G1 is downloaded on every run and a failed fetch fails the run.
+    """
+    now_utc = now_utc.astimezone(timezone.utc)
+    return {
+        "last_checked_utc": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_checked_awst": now_utc.astimezone(config.AWST).isoformat(timespec="seconds"),
+        "aemo_latest_month": str(summary["year_month"].max()),
+        "cpi_latest_quarter": cpi_edition.get("latest_quarter"),
+        "cpi_g1_publication_date": cpi_edition.get("g1_publication_date"),
+        "cpi_g1_last_modified_utc": cpi_edition.get("g1_last_modified_utc"),
+        "sources": {
+            "aemo": {
+                "status": "cached" if not_refreshed else "ok",
+                "files_processed": files_processed,
+                "kept_previous": sorted(not_refreshed),
+            },
+            "rba_g1_cpi": {"status": "ok"},
+        },
+    }
+
+
+def save_status(status: dict):
+    """Write outputs/status.json (stable key order, so a daily commit only changes what changed)."""
+    status_path = PROJECT_ROOT / config.STATUS_JSON
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(json.dumps(status, indent=2) + "\n")
+    logger.info(f"Saved status.json (last checked {status['last_checked_utc']})")
+
+
 def run(full_refresh: bool = False, months_back: int = 1):
     """Main execution flow."""
     cache_dir = str(PROJECT_ROOT / config.DATA_DIR)
@@ -215,6 +253,8 @@ def run(full_refresh: bool = False, months_back: int = 1):
 
     # Step 4: Download and analyse each new month/region
     new_results = []
+    files_processed = 0
+    not_refreshed = []   # "REGION YYYY-MM" that this run tried and could not (re)produce
     for year, month in all_months:
         for region in config.REGIONS:
             ym = f"{year}-{month:02d}"
@@ -227,6 +267,7 @@ def run(full_refresh: bool = False, months_back: int = 1):
             if not full_refresh and (region, ym) in existing and ym not in force_months:
                 continue
 
+            files_processed += 1
             try:
                 raw_df = download_month(
                     year,
@@ -237,12 +278,16 @@ def run(full_refresh: bool = False, months_back: int = 1):
                 )
                 if raw_df.empty:
                     logger.warning(f"No data for {region} {ym}, skipping")
+                    not_refreshed.append(f"{region} {ym}")
                     continue
                 stats = analyse_month(raw_df, region, year, month)
                 if stats:
                     new_results.append(stats)
+                else:
+                    not_refreshed.append(f"{region} {ym}")
             except Exception as e:
                 logger.error(f"Failed to process {region} {ym}: {e}")
+                not_refreshed.append(f"{region} {ym}")
                 continue
 
     if not new_results and summary is None:
@@ -270,7 +315,7 @@ def run(full_refresh: bool = False, months_back: int = 1):
 
     # Step 6: Download CPI and re-apply to ALL rows
     logger.info("Applying CPI adjustment to all rows...")
-    cpi_df, latest_cpi = get_cpi_lookup(cache_dir)
+    cpi_df, latest_cpi, cpi_edition = get_cpi_lookup(cache_dir)
     summary = adjust_prices(summary, cpi_df, latest_cpi)
 
     summary = summary.sort_values(["region", "year_month"]).reset_index(drop=True)
@@ -280,6 +325,12 @@ def run(full_refresh: bool = False, months_back: int = 1):
     # Step 7: Save summary and generate Excel
     save_summary(summary)
     generate_all_workbooks(summary, output_dir)
+
+    # Step 8: Record the check itself, last, so only a run that got this far updates it. Rows that
+    # could not be refreshed but were never published are not "kept"; the validator's contiguity check
+    # fails on those.
+    kept = [k for k in not_refreshed if tuple(k.split(" ")) in get_existing_months(summary)]
+    save_status(build_status(summary, cpi_edition, files_processed, kept, datetime.now(timezone.utc)))
 
     total_months = summary["year_month"].nunique()
     logger.info(f"Done. {total_months} months × {len(config.REGIONS)} regions = {len(summary)} rows")
