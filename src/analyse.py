@@ -90,6 +90,8 @@ def analyse_month(raw_df: pd.DataFrame, region: str,
     A month is complete only when it holds exactly the expected number of intervals
     (config.expected_interval_count). A partial month is not published: the next run retries it
     (the recent months are always re-downloaded), so a month appears once AEMO has published all of it.
+    If the newest month comes back incomplete in EVERY region, main.run fails the run rather than
+    exiting green without it (main._assert_newest_month_processed).
     """
     if raw_df.empty:
         return None

@@ -1,5 +1,6 @@
 """CPI data acquisition and price adjustment using RBA G1 data."""
 
+import csv
 import logging
 from pathlib import Path
 
@@ -39,14 +40,35 @@ def _parse_cpi(path: Path) -> pd.DataFrame:
 
     The data start is found by locating the "Series ID" row, not by a fixed row count: a change in
     RBA's metadata block must fail loudly rather than silently shift (or swallow) the first data row.
+    Column B must be series GCPIAG with Quarterly frequency (config.RBA_CPI_SERIES_ID / _FREQUENCY):
+    if RBA reorders the columns or moves the series to monthly, every region would be deflated by the
+    same wrong series and no ratio check downstream would notice.
     """
-    lines = Path(path).read_text().splitlines()
-    header_idx = next(
-        (i for i, line in enumerate(lines) if line.split(",", 1)[0].strip().strip('"') == "Series ID"),
-        None,
-    )
+    lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+
+    def _row(label: str) -> tuple[int, list[str]] | tuple[None, None]:
+        for i, line in enumerate(lines):
+            fields = next(csv.reader([line]), [])
+            if fields and fields[0].strip() == label:
+                return i, [f.strip() for f in fields]
+        return None, None
+
+    header_idx, series_row = _row("Series ID")
     if header_idx is None:
         raise ValueError(f"RBA G1 file {Path(path).name}: no 'Series ID' row found; layout changed?")
+    series_id = series_row[1] if len(series_row) > 1 else ""
+    if series_id != config.RBA_CPI_SERIES_ID:
+        raise ValueError(
+            f"RBA G1 file {Path(path).name}: column B is series {series_id!r}, expected "
+            f"{config.RBA_CPI_SERIES_ID!r}; table layout changed?"
+        )
+    freq_idx, freq_row = _row("Frequency")
+    frequency = freq_row[1] if freq_row and len(freq_row) > 1 else None
+    if freq_idx is None or freq_idx > header_idx or frequency != config.RBA_CPI_FREQUENCY:
+        raise ValueError(
+            f"RBA G1 file {Path(path).name}: column B frequency is {frequency!r}, expected "
+            f"{config.RBA_CPI_FREQUENCY!r}; the quarterly interpolation would be wrong"
+        )
 
     df = pd.read_csv(
         path,
@@ -105,6 +127,22 @@ def interpolate_monthly(quarterly_df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def check_cpi_fresh(latest_quarter_end: pd.Timestamp, now) -> None:
+    """Raise when the newest CPI quarter is more than config.CPI_MAX_AGE_DAYS old.
+
+    Months after the newest quarter are published with real = nominal and flagged cpi_estimated.
+    That is honest for a month or three, but if G1 stops updating (served but frozen) the run would
+    otherwise stay green while the flagged window grows. This fails the run instead.
+    """
+    age_days = (pd.Timestamp(now) - pd.Timestamp(latest_quarter_end)).days
+    if age_days > config.CPI_MAX_AGE_DAYS:
+        raise RuntimeError(
+            f"RBA G1 newest CPI quarter is {pd.Timestamp(latest_quarter_end):%d %b %Y}, {age_days} days "
+            f"ago (limit {config.CPI_MAX_AGE_DAYS}). ABS publishes about 4 weeks after quarter end: "
+            f"the G1 table has stopped updating, moved, or changed layout."
+        )
+
+
 def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float]:
     """Download CPI and prepare monthly lookup.
 
@@ -113,6 +151,7 @@ def get_cpi_lookup(cache_dir: str) -> tuple[pd.DataFrame, float]:
     """
     cache_path = str(Path(cache_dir) / "rba_g1_cpi.csv")
     quarterly = download_cpi(cache_path)
+    check_cpi_fresh(quarterly["date"].iloc[-1], config.nem_now())
     monthly = interpolate_monthly(quarterly)
 
     # Create year_month key for joining
@@ -132,6 +171,11 @@ def adjust_prices(prices_df: pd.DataFrame, cpi_df: pd.DataFrame,
 
     For months beyond the latest CPI data, no adjustment is applied (ratio = 1).
     These months are flagged with cpi_estimated=True.
+
+    cpi_base is the 'YYYY-MM' of the newest CPI quarter, i.e. the month whose dollars the real prices
+    are in. It is written on every row so the page and workbooks name the base from the CPI series
+    itself, not from the cpi_estimated flags (which would name the wrong month if the AEMO data ever
+    lagged the CPI).
     """
     df = prices_df.copy()
 
@@ -152,6 +196,8 @@ def adjust_prices(prices_df: pd.DataFrame, cpi_df: pd.DataFrame,
     # Round to 2 decimal places
     df["rrp_real"] = df["rrp_real"].round(2)
     df["peak_rrp_real"] = df["peak_rrp_real"].round(2)
+
+    df["cpi_base"] = cpi_df["year_month"].max()
 
     # Clean up
     df = df.drop(columns=["cpi_index"])

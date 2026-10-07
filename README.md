@@ -18,7 +18,7 @@ Automated analysis of NEM spot electricity prices across all five regions (NSW, 
 
 | Source | URL | Description |
 |--------|-----|-------------|
-| AEMO | `aemo.com.au/aemo/data/nem/priceanddemand/` | Aggregated 5-min/30-min spot prices |
+| AEMO | `www.aemo.com.au/aemo/data/nem/priceanddemand/` | Aggregated 5-min/30-min spot prices |
 | RBA | `rba.gov.au/statistics/tables/csv/g1-data.csv` | Quarterly CPI index (G1 table) |
 
 ## CPI Methodology
@@ -108,6 +108,8 @@ Each month's nominal price is scaled to latest-quarter dollars:
 
 For recent months where CPI hasn't been published yet (at the time of writing, Jul–Sep 2026, until the Q3 2026 CPI release), the ratio is `latest / latest = 1`, so real = nominal. These months are flagged `cpi_estimated = True` in the data, marked with a † in the dashboard's Real view, and flagged in the workbooks' Monthly Data sheet.
 
+Every row also carries `cpi_base`, the month of the newest CPI quarter (e.g. `2026-06`). That is the month whose dollars the real prices are in, and the dashboard and workbooks take the "Jun 2026 dollars" label from it rather than from the flags, so the label stays right even if the AEMO data ever lags the CPI.
+
 #### Step 4 — Rolling averages
 
 The workbook Summary sheet shows rolling averages over 1, 2, 3, 5, 10, 15 and 20 years (the dashboard shows 1, 3, 5 and 10). A period longer than a region's history is shown as `n/a` with the months available, never dropped silently. For example, the **5-year real RRP** is:
@@ -140,6 +142,7 @@ Production updates run on the **NAS runner** — the QNAP `ai-wif-runner` contai
 
 - A QNAP scheduled task fires the lane daily; `deploy/run-update.sh` reprocesses the recent complete-month overlap window.
 - Older nominal price history is treated as settled; the pipeline aborts if a protected month changes or disappears. A region-month that was missing last time (a failed download) can be filled in without tripping the guard.
+- The run fails (non-zero exit, nothing committed) rather than going green without fresh data when: the newest month AEMO lists as published failed, 404'd or was incomplete in **every** region; the newest RBA G1 CPI quarter is more than `CPI_MAX_AGE_DAYS` (153, about 5 months) old; or G1 column B is no longer series `GCPIAG` with Quarterly frequency (`src/config.py`).
 - The lane commits as `aemo-nas-bot` and publishes only when canonical `outputs/summary.csv` changes, so daily workbook regeneration does not create noisy commits.
 - GitHub Pages deploys on those pushes.
 - GitHub Actions is kept as a manual verification/fallback runner.
@@ -184,9 +187,10 @@ After the pipeline runs and before committing, an automated validation step (`te
 
 - `summary.csv` has every required column, no duplicate region/month rows, and finite prices (none below the −$1,000/MWh market floor)
 - All 5 NEM regions are present, each contiguous from its start month (Tasmania: Jun 2005) to one common end month
+- That end month is recent: any month that ended at least `AEMO_MAX_MONTH_LAG_DAYS` (35) days ago must be present (`src/config.py`)
 - **Every** month, including the latest, holds exactly days × 48 (before Oct 2021) or days × 288 intervals, and exactly weekdays × 30 or × 180 peak intervals
 - `carbon_flag` covers exactly Jul 2012 – Jun 2014
-- CPI columns are consistent: `cpi_estimated` is only ever the most recent months, those months have real = nominal, and the CPI ratio is the same across regions and across the RRP and peak columns
+- CPI columns are consistent: `cpi_estimated` is only ever the most recent months, those months have real = nominal, the CPI ratio is the same across regions and across the RRP and peak columns, and (when present) `cpi_base` is one month with `cpi_estimated` flagging exactly the months after it
 - All 6 workbooks exist, have the expected sheets, and agree with `summary.csv`
 
 If any check fails, the NAS lane or manual fallback workflow exits before committing — preventing bad data from reaching the dashboard.

@@ -163,6 +163,8 @@ def test_probe_year_boundary():
 G1 = """G1 CONSUMER PRICE INFLATION
 Title,Consumer price index,Year-ended inflation
 Description,Consumer price index; All groups,Year-ended
+Frequency,Quarterly,Quarterly
+Type,Original,Original
 Units,"Index, September 2025 month = 100",Per cent
 
 Source,ABS / RBA,ABS / RBA
@@ -199,6 +201,52 @@ def test_cpi_parse_survives_extra_metadata_rows_and_fails_loudly_without_series_
         raise AssertionError("a layout change must fail loudly")
 
 
+def _parse_fails(text, needle):
+    try:
+        _parse(text)
+    except ValueError as exc:
+        assert needle in str(exc), exc
+    else:
+        raise AssertionError(f"expected a ValueError mentioning {needle!r}")
+
+
+def test_cpi_parse_requires_gcpiag_in_column_b():
+    # A reordered table would put a percent-change series in column B and deflate every region by it.
+    _parse_fails(G1.replace("Series ID,GCPIAG,GCPIAGYP", "Series ID,GCPIAGYP,GCPIAG"), "GCPIAG")
+
+
+def test_cpi_parse_requires_quarterly_frequency():
+    _parse_fails(G1.replace("Frequency,Quarterly,", "Frequency,Monthly,"), "Quarterly")
+    _parse_fails(G1.replace("Frequency,Quarterly,Quarterly\n", ""), "Quarterly")       # row missing
+
+
+def test_cpi_parse_tolerates_a_byte_order_mark():
+    assert len(_parse("\ufeff" + G1)) == 3
+
+
+def _stale(quarter_end, now):
+    try:
+        cpi.check_cpi_fresh(pd.Timestamp(quarter_end), now)
+    except RuntimeError:
+        return True
+    return False
+
+
+def test_cpi_freshness_allows_the_normal_wait_for_a_quarter():
+    # Jun qtr is the newest until the Sep qtr lands ~28 Oct; the 1 Nov run may still see only Jun.
+    assert not _stale("2026-06-30", datetime(2026, 10, 7))
+    assert not _stale("2026-06-30", datetime(2026, 11, 1, 10, 38))
+    assert not _stale("2026-06-30", datetime(2026, 11, 30))      # a release a month late: still OK
+    # Dec qtr, released late Jan (4th Wednesday from Feb 2027), read on 1 May before the Mar qtr.
+    assert not _stale("2026-12-31", datetime(2027, 5, 1))
+
+
+def test_cpi_freshness_fails_when_g1_stops_updating():
+    assert _stale("2026-06-30", datetime(2026, 12, 1, 10, 38))   # Sep qtr more than a month late
+    assert _stale("2026-03-31", datetime(2026, 10, 7))           # a whole quarter missed
+    assert _stale("2025-06-30", datetime(2026, 10, 7))           # frozen for a year
+
+
 # ----------------------------------------------------------------------------- workbook
 def _frame(months, estimated_last=0):
     ym = [p.strftime("%Y-%m") for p in pd.period_range(end="2026-09", periods=months, freq="M")]
@@ -230,9 +278,33 @@ def test_workbook_summary_has_explicit_na_rows_and_real_dollar_label():
         assert flags.count("Yes") == 3 and flags[-1] == "Yes" and flags[0] in (None, "")
 
 
+def test_adjust_prices_writes_the_cpi_quarter_as_the_base():
+    prices = pd.DataFrame({"region": "NSW1", "year_month": ["2026-05", "2026-06", "2026-07"],
+                           "rrp_nominal": 100.0, "peak_rrp_nominal": 120.0})
+    cpi_df = pd.DataFrame({"year_month": ["2026-04", "2026-05", "2026-06"], "cpi_index": [99.0, 99.5, 100.0]})
+    out = cpi.adjust_prices(prices, cpi_df, 100.0)
+    assert set(out["cpi_base"]) == {"2026-06"}
+    assert out["cpi_estimated"].tolist() == [False, False, True]
+
+
+def test_workbook_names_the_cpi_quarter_even_when_aemo_lags_the_cpi():
+    # AEMO data ends Sep 2026 with nothing flagged, but the CPI already has the Dec quarter: the
+    # flags alone would say "Sep 2026 dollars" while the figures are in Dec 2026 dollars.
+    df = _frame(24)
+    assert "Sep 2026 dollars" in excel_output._real_dollars_note(df)          # old files: from the flags
+    df["cpi_base"] = "2026-12"
+    note = excel_output._real_dollars_note(df)
+    assert "Dec 2026 dollars" in note and "no CPI yet" not in note, note
+
+
 # ----------------------------------------------------------------------------- run(): full refresh + partial month
-def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datetime(2026, 4, 20)):
-    """Drive main.run() against fakes. Returns the summary written."""
+def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datetime(2026, 4, 20),
+         fail_month=None, fail_mode="partial"):
+    """Drive main.run() against fakes. Returns the summary written.
+
+    fail_month makes that month fail in EVERY region: "partial" (incomplete file), "404" (empty frame,
+    as download_month returns for a 404) or "error" (download_month raises).
+    """
     with tempfile.TemporaryDirectory() as d:
         saved = {}
         patches = {
@@ -248,6 +320,12 @@ def _run(full_refresh, months, calls, partial=None, summary_rows=None, now=datet
 
         def fake_download(year, month, region, cache_dir, force=False):
             calls.append((region, f"{year}-{month:02d}", force))
+            if fail_month == f"{year}-{month:02d}":
+                if fail_mode == "error":
+                    raise RuntimeError("Failed to download after 3 attempts")
+                if fail_mode == "404":
+                    return pd.DataFrame(columns=download.EXPECTED_COLUMNS)
+                return _month_frame(year, month, drop=500)
             if partial == (region, f"{year}-{month:02d}"):
                 return _month_frame(year, month, drop=500)
             return _month_frame(year, month)
@@ -289,6 +367,43 @@ def test_a_partial_month_is_not_published_and_the_rest_still_is():
     out = _run(True, MONTHS, calls, partial=("QLD1", "2026-03"))
     assert len(out) == 3 * len(config.REGIONS) - 1
     assert out[(out.region == "QLD1") & (out.year_month == "2026-03")].empty
+
+
+def test_newest_month_failing_in_every_region_fails_the_run():
+    # The old loop logged and skipped each failure, so a month no region produced was a green run.
+    for mode in ("partial", "404", "error"):
+        try:
+            _run(True, MONTHS, [], fail_month="2026-03", fail_mode=mode)
+        except RuntimeError as exc:
+            assert "2026-03" in str(exc), exc
+        else:
+            raise AssertionError(f"newest month failing everywhere ({mode}) must fail the run")
+
+
+def test_newest_month_already_published_survives_a_failed_redownload():
+    # 2026-03 is already in summary.csv; its mutable-window re-download failing keeps the old row.
+    calls = []
+    first = _run(True, MONTHS, calls)
+    out = _run(False, MONTHS, calls, summary_rows=first, fail_month="2026-03", fail_mode="error")
+    assert len(out) == 3 * len(config.REGIONS)
+
+
+def test_an_older_month_failing_everywhere_does_not_fail_the_run():
+    # Only the newest month is checked here; a gap further back fails the validator's contiguity check.
+    out = _run(True, MONTHS, [], fail_month="2026-02")
+    assert "2026-02" not in set(out.year_month)
+
+
+def test_latest_required_month_bound():
+    # Aug ends 00:00 1 Sep; with a 35-day tolerance it is due from 00:00 6 Oct.
+    assert config.AEMO_MAX_MONTH_LAG_DAYS == 35
+    assert config.latest_required_month(datetime(2026, 10, 5, 23, 59)) == "2026-07"
+    assert config.latest_required_month(datetime(2026, 10, 6, 0, 0)) == "2026-08"
+    # A run on the 1st never requires the month that just ended, nor the one before it.
+    assert config.latest_required_month(datetime(2026, 11, 1, 10, 38)) == "2026-08"
+    assert config.latest_required_month(datetime(2027, 1, 7)) == "2026-11"    # year boundary
+    # 28 days of AEMO lag (the most seen) stays inside the tolerance.
+    assert config.latest_required_month(datetime(2026, 10, 29)) < "2026-09"
 
 
 if __name__ == "__main__":

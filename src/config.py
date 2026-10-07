@@ -43,7 +43,7 @@ ROLLING_PERIODS = [1, 2, 3, 5, 10, 15, 20]
 # AEMO aggregated price CSV URL pattern. Every file has a header row.
 # Before Oct 2021 the intervals are 30-minute trading periods; from Oct 2021 they are 5-minute.
 AEMO_URL_PATTERN = (
-    "https://aemo.com.au/aemo/data/nem/priceanddemand/"
+    "https://www.aemo.com.au/aemo/data/nem/priceanddemand/"
     "PRICE_AND_DEMAND_{ym}_{region}.csv"
 )
 
@@ -52,6 +52,16 @@ FORMAT_CHANGE_DATE = datetime(2021, 10, 1)
 
 # RBA CPI data
 RBA_CPI_URL = "https://www.rba.gov.au/statistics/tables/csv/g1-data.csv"
+# The deflator is G1 column B, which must be the quarterly All groups CPI index. Anything else in
+# that column (a re-ordered table, a percent-change series, a switch to monthly) fails the run.
+RBA_CPI_SERIES_ID = "GCPIAG"
+RBA_CPI_FREQUENCY = "Quarterly"
+# The newest CPI quarter may be at most this many days old (quarter-end to NEM "now"), about 5
+# months. ABS publishes a quarter about 4 weeks after it ends and RBA G1 follows within a day or
+# two, so the oldest the newest quarter normally gets is about 4 months (e.g. 30 Jun until the Sep
+# quarter lands in late Oct). 153 days fails the first run after a release is about a month late,
+# instead of letting the "awaiting CPI" months pile up for a year.
+CPI_MAX_AGE_DAYS = 153
 
 # Paths (relative to project root)
 DATA_DIR = "data"
@@ -71,6 +81,22 @@ NEM_UTC_OFFSET = timedelta(hours=10)
 def nem_now() -> datetime:
     """Current wall-clock time in NEM time (naive datetime)."""
     return (datetime.now(timezone.utc) + NEM_UTC_OFFSET).replace(tzinfo=None)
+
+
+# Lower bound on the newest published month (tests/validate_outputs.py). A month that ENDED at least
+# this many days ago must be in summary.csv. AEMO's previous-month file has been complete by the 1st
+# (and lags of up to 28 days have been seen), so 35 days never trips on normal publication lag; it
+# catches a pipeline that keeps going green while no new month arrives.
+AEMO_MAX_MONTH_LAG_DAYS = 35
+
+
+def latest_required_month(now: datetime) -> str:
+    """'YYYY-MM' of the newest month that must be published at `now` (NEM time): the newest month
+    whose end (00:00 on the 1st of the next month) is at least AEMO_MAX_MONTH_LAG_DAYS ago."""
+    cutoff = now - timedelta(days=AEMO_MAX_MONTH_LAG_DAYS)
+    # Months ending on or before the cutoff are those before the cutoff's own month.
+    last_month_end = datetime(cutoff.year, cutoff.month, 1) - timedelta(days=1)
+    return last_month_end.strftime("%Y-%m")
 
 
 def expected_interval_count(year: int, month: int) -> int:

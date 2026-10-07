@@ -181,10 +181,14 @@ function regionRows() {
   return allData.filter(r => r.region === activeRegion).sort((a, b) => a.year_month.localeCompare(b.year_month));
 }
 
-// Real prices are in dollars of the latest CPI quarter. The last month the CPI actually covers is
-// that base; months after it are flagged cpi_estimated and carry real = nominal.
+// Real prices are in dollars of the latest CPI quarter. The pipeline writes that quarter's month on
+// every row (cpi_base); months after it are flagged cpi_estimated and carry real = nominal. A file
+// without cpi_base falls back to the last month the CPI actually covers.
 function cpiBase() {
-  if (!allData.length || !('cpi_estimated' in allData[0])) return null;   // no flag in the file: no claim
+  if (!allData.length) return null;
+  const base = String(allData[0].cpi_base ?? '');
+  if (/^\d{4}-\d{2}$/.test(base)) return base;
+  if (!('cpi_estimated' in allData[0])) return null;   // no flag in the file: no claim
   const covered = allData.filter(r => !isTrue(r.cpi_estimated)).map(r => r.year_month).sort();
   return covered.length ? covered[covered.length - 1] : null;
 }
