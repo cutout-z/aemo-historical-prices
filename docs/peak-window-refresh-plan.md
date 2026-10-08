@@ -1,7 +1,8 @@
 # Plan — refreshing published history after the peak-window fix
 
-Status: **planned, not executed.** The fix is on branch `fix/peak-window` (commit `1ea371f`),
-deliberately **not merged to `main`**.
+Status: **executed 2026-10-05.** The fix (`1ea371f`) was merged and published history restated in
+`23f7575` — see `docs/logic-pass-2026-10-05.md` H1 resolution. This plan is kept as the record of
+what changed and why.
 
 ## What changes, and what does not
 
