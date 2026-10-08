@@ -1,0 +1,18 @@
+{
+  "last_checked_utc": "2026-10-08T00:38:10Z",
+  "last_checked_awst": "2026-10-08T08:38:10+08:00",
+  "aemo_latest_month": "2026-09",
+  "cpi_latest_quarter": "2026-06",
+  "cpi_g1_publication_date": "2026-07-30",
+  "cpi_g1_last_modified_utc": "2026-07-30T01:16:42Z",
+  "sources": {
+    "aemo": {
+      "status": "ok",
+      "files_processed": 10,
+      "kept_previous": []
+    },
+    "rba_g1_cpi": {
+      "status": "ok"
+    }
+  }
+}
