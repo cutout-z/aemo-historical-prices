@@ -121,6 +121,7 @@ Location: `agent-contracts/facts/AEMO-FACTS.md` (git, `cutout-z/agent-contracts`
 | Pipeline | Python 3.11 (`monthly-update.yml`), pandas ≥ 2.0, openpyxl ≥ 3.1, requests (`requirements.txt`); `src/main.py` orchestrates |
 | Data lane | NAS `ai-wif-runner` container, `nas-job aemo-historical-prices` → `deploy/run-update.sh` with `--months-back 2`, commits as `aemo-nas-bot` to `main`, writes `outputs/` only (`deploy/README.md`) |
 | Lane commits | `summary.csv` changed → all `outputs/` as "Update historical price analysis YYYY-MM"; else only `status.json` as "Status check YYYY-MM-DD (no data change)" (`deploy/run-update.sh`) |
+| Lane schedule | Daily at 08:38 AWST (NAS crontab `38 8 * * *`, checked 2026-10-08). Daily since 2026-10-07; before that, monthly on the 1st |
 | Fallback runner | `monthly-update.yml`, manual `workflow_dispatch` only, commits as `github-actions[bot]` |
 | Raw cache | `data/*.csv`, gitignored; empty on a laptop; NAS prunes after 120 days (`deploy/env.example`) |
 | Theme | dark default; `localStorage` key `aemo-historical-prices:theme`; `?theme=light|dark` forces one (`index.html`) |
