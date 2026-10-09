@@ -164,6 +164,7 @@ Location: `agent-contracts/facts/AEMO-FACTS.md` (git, `cutout-z/agent-contracts`
 | Served by | `https://cutout-z.github.io/aemo-historical-prices/`; Pages `build_type: workflow` from `main` (GitHub API, 2026-10-08) |
 | Deploy trigger | push to `main` touching `outputs/**`, `index.html`, `README.md` or the workflow only (`deploy-pages.yml` `paths:`) |
 | Page | `index.html` (482 lines, inline script), PapaParse 5.4.1 from jsDelivr, `assets/css/app.css` (committed, minified) |
+| Shared sidebar | `index.html` loads `https://cutout-z.github.io/aemo-dashboards/nav.js` (repo `cutout-z/aemo-dashboards`, added 2026-10-10): the sidebar and phone top bar every AEMO dashboard shares. It changes there, not here, and a change there reaches this page with no PR here. It pads `body` by 232px at 1024px and wider, so check layout changes at that width. Keep the tag plain (not `defer`) at the end of `<head>` |
 | CSS source | `assets/css/tailwind.src.css` (family tokens) + `tailwind.config.js` (Tailwind v3.4.17 standalone, `content: index.html, design/**`) |
 | Pipeline | Python 3.11 (`monthly-update.yml`), pandas ≥ 2.0, openpyxl ≥ 3.1, requests (`requirements.txt`); `src/main.py` orchestrates |
 | Data lane | NAS `ai-wif-runner` container, `nas-job aemo-historical-prices` → `deploy/run-update.sh` with `--months-back 2`, commits as `aemo-nas-bot` to `main`, writes `outputs/` only (`deploy/README.md`) |
