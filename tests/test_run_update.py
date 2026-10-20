@@ -141,6 +141,19 @@ def test_run_starts_from_committed_outputs_not_leftovers():
         assert not (app / "outputs" / "stray.xlsx").exists()
 
 
+def test_commit_is_labelled_with_latest_data_month():
+    # The label is the newest year_month in the summary, not the month the lane ran in.
+    if not shutil.which("git"):
+        return
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        app = _setup(tmp)
+        new = "region,year_month\nNSW1,2003-08\nQLD1,2003-07\n"
+        _update(tmp, app, "2026-10-09T00:38:12Z", summary=new)
+        subject, _ = _last_commit(app)
+        assert subject == "Update historical price analysis 2003-08", subject
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

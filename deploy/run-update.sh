@@ -71,7 +71,10 @@ else
     exit 0
   fi
 
-  git commit -m "${COMMIT_MESSAGE_PREFIX} $(date -u +%Y-%m)"
+  # Label with the latest DATA month in the summary, not the run month.
+  data_month="$(awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "year_month") c = i; next }
+    c && $c > m { m = $c } END { print m }' outputs/summary.csv)"
+  git commit -m "${COMMIT_MESSAGE_PREFIX} ${data_month:-$(date -u +%Y-%m)}"
 fi
 
 if [[ "${PUSH_CHANGES}" == "1" ]]; then
