@@ -240,8 +240,8 @@ last checked …", both themes, phone width.
 
 ## Working alongside other agents
 
-The other writer to `main` is `aemo-nas-bot` (the lane). Hermes watches the lane (the `aemo-audit`
-skill; unverified: not in this repo). A logic pass is read-only on the pipeline. Its findings note
+The other writer to `main` is `aemo-nas-bot` (the lane). Any agent inspects or triggers the lane over the bridge (`nas-lane-ops` skill; the lane row is
+`agent-contracts/ARCHITECTURE.md` §8.5). A logic pass is read-only on the pipeline. Its findings note
 follows the format of `docs/logic-pass-2026-10-05.md` (filed on `main` before this rule; new notes don't
 go there) and goes on `handback/<pass-branch>` per the family block, never on `main` (rule 1). Fixes go
 on their own branch; merges to `main` have been the owner's (git log).
