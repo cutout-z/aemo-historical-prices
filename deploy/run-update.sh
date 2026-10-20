@@ -19,8 +19,16 @@ if ! git pull --ff-only origin main; then
   echo "origin/main is not fast-forwardable (rewritten?) — resetting onto it."
   git reset --hard origin/main
 fi
+# Start from the COMMITTED outputs. A failed or manual run may have left
+# outputs/ edited or holding stray files; the pipeline would read the edited
+# summary as its input and settled-history baseline, and `git add outputs/`
+# below would publish both.
+git checkout HEAD -- outputs/ 2>/dev/null || true
+git clean -fdq -- outputs/
+# Baseline = the COMMITTED summary, not the working tree. The "did anything
+# change" check below compares against it.
 before_summary="$(mktemp)"
-cp outputs/summary.csv "${before_summary}" 2>/dev/null || true
+git show HEAD:outputs/summary.csv > "${before_summary}" 2>/dev/null || : > "${before_summary}"
 
 "${PYTHON}" -m src.main ${PIPELINE_ARGS}
 
@@ -63,7 +71,10 @@ else
     exit 0
   fi
 
-  git commit -m "${COMMIT_MESSAGE_PREFIX} $(date -u +%Y-%m)"
+  # Label with the latest DATA month in the summary, not the run month.
+  data_month="$(awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "year_month") c = i; next }
+    c && $c > m { m = $c } END { print m }' outputs/summary.csv)"
+  git commit -m "${COMMIT_MESSAGE_PREFIX} ${data_month:-$(date -u +%Y-%m)}"
 fi
 
 if [[ "${PUSH_CHANGES}" == "1" ]]; then

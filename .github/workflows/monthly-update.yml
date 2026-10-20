@@ -53,7 +53,9 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Update historical price analysis $(date +%Y-%m)"
+            data_month="$(awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "year_month") c = i; next }
+              c && $c > m { m = $c } END { print m }' outputs/summary.csv)"
+            git commit -m "Update historical price analysis ${data_month:-$(date +%Y-%m)}"
             git push
           fi
 
