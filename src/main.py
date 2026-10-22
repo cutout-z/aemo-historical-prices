@@ -268,13 +268,17 @@ def run(full_refresh: bool = False, months_back: int = 1):
                 continue
 
             files_processed += 1
+            # A month missing from summary.csv outside the mutable window is a gap being healed. Its
+            # cached file (if any) was incomplete or rejected, so bypass the cache rather than
+            # re-reading it until the 120-day prune deletes it.
+            is_gap = (region, ym) not in existing
             try:
                 raw_df = download_month(
                     year,
                     month,
                     region,
                     cache_dir,
-                    force=(full_refresh or ym in force_months),
+                    force=(full_refresh or ym in force_months or is_gap),
                 )
                 if raw_df.empty:
                     logger.warning(f"No data for {region} {ym}, skipping")
