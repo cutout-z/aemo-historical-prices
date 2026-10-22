@@ -381,6 +381,17 @@ def test_full_refresh_redownloads_everything():
     assert len(calls) == len(out)
 
 
+def test_a_gap_month_outside_the_window_bypasses_the_cache():
+    # A region-month missing from summary.csv is re-downloaded, not re-read from an incomplete cache.
+    calls = []
+    first = _run(True, MONTHS, [])
+    gap = first[~((first.region == "QLD1") & (first.year_month == "2026-01"))]
+    out = _run(False, MONTHS, calls, summary_rows=gap)
+    assert ("QLD1", "2026-01", True) in calls
+    assert len(out) == 3 * len(config.REGIONS)
+    assert not any(ym == "2026-02" for _, ym, _ in calls), "settled, complete months stay cached"
+
+
 def test_the_in_progress_month_is_excluded_using_nem_time():
     calls = []
     out = _run(True, MONTHS, calls, now=datetime(2026, 3, 20))   # March is still running
