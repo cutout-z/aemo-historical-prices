@@ -1,10 +1,10 @@
 {
-  "last_checked_utc": "2026-10-29T00:38:07Z",
-  "last_checked_awst": "2026-10-29T08:38:07+08:00",
+  "last_checked_utc": "2026-10-30T00:38:07Z",
+  "last_checked_awst": "2026-10-30T08:38:07+08:00",
   "aemo_latest_month": "2026-09",
-  "cpi_latest_quarter": "2026-06",
-  "cpi_g1_publication_date": "2026-07-30",
-  "cpi_g1_last_modified_utc": "2026-07-30T01:16:42Z",
+  "cpi_latest_quarter": "2026-09",
+  "cpi_g1_publication_date": "2026-10-29",
+  "cpi_g1_last_modified_utc": "2026-10-29T05:11:08Z",
   "sources": {
     "aemo": {
       "status": "ok",
