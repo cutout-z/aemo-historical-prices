@@ -249,7 +249,7 @@ Reserved elsewhere, never use: 8050, 9250–9259, 9300, 9330, 9350, 9351 (unveri
 Pages serves the repo root, so serve the root.
 
 ```bash
-python3 -m pytest -q -p no:cacheprovider tests   # baseline at 8987e57: 40 passed, 0 failed
+python3 -m pytest -q -p no:cacheprovider tests   # baseline 2026-11-17 at 5574830: 44 passed, 0 failed
 python3 tests/validate_outputs.py                # exit 0; reads outputs/ only
 python3 scripts/compare-summaries.py OLD.csv NEW.csv   # rewrite gate: only peak columns may move
 ```
@@ -287,7 +287,7 @@ on their own branch; merges to `main` have been the owner's (git log).
 
 - [ ] Nothing committed to `main`; `git diff --stat origin/main` shows no `outputs/**`, `deploy/**`,
       `.github/**` (unless the owner said yes to that exact change).
-- [ ] `pytest` counts stated (baseline 40 passed) and `tests/validate_outputs.py` exit code stated.
+- [ ] `pytest` counts stated (baseline 44 passed) and `tests/validate_outputs.py` exit code stated.
 - [ ] Page changes: browser-verified at desktop and phone, both themes; `app.css` rebuilt and committed.
 - [ ] Logic changes: which published columns would move, by how much, and whether an audited rewrite is needed.
 - [ ] No design evidence or scratch files anywhere Pages would publish them.
