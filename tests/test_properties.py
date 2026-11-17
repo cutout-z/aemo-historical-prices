@@ -120,21 +120,24 @@ def test_guard_any_changed_settled_cell_raises(d, mutable, data):
     if col in (2, 3):
         delta = int(delta) + 1
     if col in (0, 1):
-        # DIVERGENCE (pinned below): pandas assert_frame_equal tolerates a relative change under 1e-5,
-        # so a price change that small passes the guard. Only changes beyond that tolerance are asserted here.
-        assume(delta > 1e-4 * max(1.0, abs(d[key][col]) + delta))
+        # DIVERGENCE (pinned below): assert_frame_equal keeps pandas' default tolerance, so a price change
+        # within atol=1e-8 + rtol=1e-5 * max(|old|, |new|) passes the guard. Exactly that band is excluded;
+        # every change above it must raise.
+        old = d[key][col]
+        assume(delta > 1e-8 + 1e-5 * max(abs(old), abs(old + delta)))
     assert _raises(_frame(d), _frame(_change_one(d, key, col, delta)), mutable)
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="counterexample: settled rrp_nominal 12500.0 -> 12500.125 (relative 1e-5) is not detected; "
-    "assert_frame_equal(check_dtype=False) keeps pandas' default rtol=1e-5, so tiny settled price changes pass "
-    "the guard. Proposed fix: assert_frame_equal(..., rtol=0, atol=0) in _assert_settled_history_unchanged.",
+    reason="counterexample: settled rrp_nominal 1000.00 -> 1000.01 is not detected; assert_frame_equal "
+    "(check_dtype=False) keeps pandas' default rtol=1e-5. Reachable because rrp_nominal is round(mean, 2) "
+    "(src/analyse.py), so the smallest real change is 0.01, undetected only when the monthly mean is "
+    ">= $1000/MWh. Proposed fix: assert_frame_equal(..., rtol=0, atol=0) in _assert_settled_history_unchanged.",
 )
 def test_guard_rejects_tiny_relative_change_in_settled_price():
-    d = {("NSW1", "2020-01"): (12500.0, 0.0, 0, 0, False)}
-    assert _raises(_frame(d), _frame(_change_one(d, ("NSW1", "2020-01"), 0, 0.125)), set())
+    d = {("NSW1", "2020-01"): (1000.0, 0.0, 0, 0, False)}
+    assert _raises(_frame(d), _frame(_change_one(d, ("NSW1", "2020-01"), 0, 0.01)), set())
 
 
 @given(d=rows_st, mutable=mutable_st, data=st.data())
